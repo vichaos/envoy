@@ -1,6 +1,7 @@
 #include "test/test_common/environment.h"
 
 #include <sys/un.h>
+#include <unistd.h>
 
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include "common/common/assert.h"
 #include "common/common/compiler_requirements.h"
 #include "common/common/logger.h"
+#include "common/common/utility.h"
 
 #include "server/options_impl.h"
 
@@ -149,6 +151,11 @@ std::string TestEnvironment::temporaryFileSubstitute(const std::string& path,
                                                      const ParamMap& param_map,
                                                      const PortMap& port_map,
                                                      Network::Address::IpVersion version) {
+  // Protobufs should be generated dynamically so not need port substitution.
+  if (path.size() > 3 && path.substr(path.size() - 3) == ".pb") {
+    return path;
+  }
+
   // Load the entire file as a string, regex replace one at a time and write it back out. Proper
   // templating might be better one day, but this works for now.
   const std::string json_path = TestEnvironment::runfilesPath(path);
@@ -179,7 +186,9 @@ std::string TestEnvironment::temporaryFileSubstitute(const std::string& path,
   // Substitute paths and other common things.
   out_json_string = substitute(out_json_string, version);
 
-  const std::string out_json_path = TestEnvironment::temporaryPath(path + ".with.ports.json");
+  const std::string extension = StringUtil::endsWith(path, ".yaml") ? ".yaml" : ".json";
+  const std::string out_json_path =
+      TestEnvironment::temporaryPath(path + ".with.ports" + extension);
   RELEASE_ASSERT(::system(("mkdir -p $(dirname " + out_json_path + ")").c_str()) == 0);
   {
     std::ofstream out_json_file(out_json_path);
@@ -206,4 +215,16 @@ void TestEnvironment::exec(const std::vector<std::string>& args) {
     RELEASE_ASSERT(false);
   }
 }
+
+std::string TestEnvironment::writeStringToFileForTest(const std::string& filename,
+                                                      const std::string& contents) {
+  const std::string out_path = TestEnvironment::temporaryPath(filename);
+  unlink(out_path.c_str());
+  {
+    std::ofstream out_file(out_path);
+    out_file << contents;
+  }
+  return out_path;
+}
+
 } // namespace Envoy

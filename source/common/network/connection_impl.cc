@@ -34,6 +34,21 @@ Address::InstanceConstSharedPtr getNullLocalAddress(const Address::Instance& add
 }
 } // namespace
 
+int ConnectionImplUtility::createSocket(Address::InstanceConstSharedPtr address,
+                                        const Address::InstanceConstSharedPtr source_address) {
+  const int fd = address->socket(Address::SocketType::Stream);
+  if (fd >= 0 && source_address != nullptr) {
+    int rc = source_address->bind(fd);
+    // TODO(alyssawilk) make this a non-fatal connect failure.
+    if (rc < 0) {
+      ENVOY_LOG_MISC(critical, "Bind failure. Failed to bind to {}: {}", source_address->asString(),
+                     strerror(errno));
+    }
+    RELEASE_ASSERT(rc >= 0);
+  }
+  return fd;
+}
+
 void ConnectionImplUtility::updateBufferStats(uint64_t delta, uint64_t new_total,
                                               uint64_t& previous_total, Stats::Counter& stat_total,
                                               Stats::Gauge& stat_current) {
@@ -316,7 +331,7 @@ void ConnectionImpl::setBufferLimits(uint32_t limit) {
   // bytes) would not trigger watermarks but a blocked socket (move |limit| bytes, flush 0 bytes)
   // would result in respecting the exact buffer limit.
   if (limit > 0) {
-    write_buffer_.setWatermarks(limit / 2, limit + 1);
+    write_buffer_.setWatermarks(limit + 1);
   }
 }
 
@@ -535,10 +550,11 @@ void ConnectionImpl::updateWriteBufferStats(uint64_t num_written, uint64_t new_s
                                            buffer_stats_->write_current_);
 }
 
-ClientConnectionImpl::ClientConnectionImpl(Event::DispatcherImpl& dispatcher,
-                                           Address::InstanceConstSharedPtr address)
-    : ConnectionImpl(dispatcher, address->socket(Address::SocketType::Stream), address,
-                     getNullLocalAddress(*address), false, false) {}
+ClientConnectionImpl::ClientConnectionImpl(
+    Event::DispatcherImpl& dispatcher, Address::InstanceConstSharedPtr address,
+    const Network::Address::InstanceConstSharedPtr source_address)
+    : ConnectionImpl(dispatcher, ConnectionImplUtility::createSocket(address, source_address),
+                     address, getNullLocalAddress(*address), false, false) {}
 
 } // namespace Network
 } // namespace Envoy

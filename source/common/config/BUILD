@@ -111,6 +111,7 @@ envoy_cc_library(
         "//source/common/http:headers_lib",
         "//source/common/http:rest_api_fetcher_lib",
         "//source/common/protobuf",
+        "//source/common/protobuf:utility_lib",
     ],
 )
 
@@ -130,6 +131,7 @@ envoy_cc_library(
     hdrs = ["lds_json.h"],
     external_deps = ["envoy_lds"],
     deps = [
+        ":address_json_lib",
         ":json_utility_lib",
         ":tls_context_json_lib",
         "//include/envoy/json:json_object_interface",

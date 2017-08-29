@@ -35,9 +35,6 @@
 namespace Envoy {
 namespace Server {
 
-#define MAKE_HANDLER(X)                                                                            \
-  [this](const std::string& url, Buffer::Instance& data) -> Http::Code { return X(url, data); }
-
 AdminFilter::AdminFilter(AdminImpl& parent) : parent_(parent) {}
 
 Http::FilterHeadersStatus AdminFilter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
@@ -342,22 +339,25 @@ AdminImpl::AdminImpl(const std::string& access_log_path, const std::string& prof
       tracing_stats_(Http::ConnectionManagerImpl::generateTracingStats("http.admin.tracing.",
                                                                        server_.stats())),
       handlers_{
-          {"/certs", "print certs on machine", MAKE_HANDLER(handlerCerts)},
-          {"/clusters", "upstream cluster status", MAKE_HANDLER(handlerClusters)},
-          {"/cpuprofiler", "enable/disable the CPU profiler", MAKE_HANDLER(handlerCpuProfiler)},
+          {"/certs", "print certs on machine", MAKE_ADMIN_HANDLER(handlerCerts), false},
+          {"/clusters", "upstream cluster status", MAKE_ADMIN_HANDLER(handlerClusters), false},
+          {"/cpuprofiler", "enable/disable the CPU profiler",
+           MAKE_ADMIN_HANDLER(handlerCpuProfiler), false},
           {"/healthcheck/fail", "cause the server to fail health checks",
-           MAKE_HANDLER(handlerHealthcheckFail)},
+           MAKE_ADMIN_HANDLER(handlerHealthcheckFail), false},
           {"/healthcheck/ok", "cause the server to pass health checks",
-           MAKE_HANDLER(handlerHealthcheckOk)},
+           MAKE_ADMIN_HANDLER(handlerHealthcheckOk), false},
           {"/hot_restart_version", "print the hot restart compatability version",
-           MAKE_HANDLER(handlerHotRestartVersion)},
-          {"/logging", "query/change logging levels", MAKE_HANDLER(handlerLogging)},
-          {"/quitquitquit", "exit the server", MAKE_HANDLER(handlerQuitQuitQuit)},
-          {"/reset_counters", "reset all counters to zero", MAKE_HANDLER(handlerResetCounters)},
+           MAKE_ADMIN_HANDLER(handlerHotRestartVersion), false},
+          {"/logging", "query/change logging levels", MAKE_ADMIN_HANDLER(handlerLogging), false},
+          {"/quitquitquit", "exit the server", MAKE_ADMIN_HANDLER(handlerQuitQuitQuit), false},
+          {"/reset_counters", "reset all counters to zero",
+           MAKE_ADMIN_HANDLER(handlerResetCounters), false},
           {"/server_info", "print server version/status information",
-           MAKE_HANDLER(handlerServerInfo)},
-          {"/stats", "print server stats", MAKE_HANDLER(handlerStats)},
-          {"/listeners", "print listener addresses", MAKE_HANDLER(handlerListenerInfo)}} {
+           MAKE_ADMIN_HANDLER(handlerServerInfo), false},
+          {"/stats", "print server stats", MAKE_ADMIN_HANDLER(handlerStats), false},
+          {"/listeners", "print listener addresses", MAKE_ADMIN_HANDLER(handlerListenerInfo),
+           false}} {
 
   if (!address_out_path.empty()) {
     std::ofstream address_out_file(address_out_path);
@@ -425,5 +425,26 @@ const Network::Address::Instance& AdminImpl::localAddress() {
   return *server_.localInfo().address();
 }
 
-} // Server
+bool AdminImpl::addHandler(const std::string& prefix, const std::string& help_text,
+                           HandlerCb callback, bool removable) {
+  auto it = std::find_if(handlers_.cbegin(), handlers_.cend(),
+                         [&prefix](const UrlHandler& entry) { return prefix == entry.prefix_; });
+  if (it == handlers_.end()) {
+    handlers_.push_back({prefix, help_text, callback, removable});
+    return true;
+  }
+  return false;
+}
+
+bool AdminImpl::removeHandler(const std::string& prefix) {
+  const uint size_before_removal = handlers_.size();
+  handlers_.remove_if(
+      [&prefix](const UrlHandler& entry) { return prefix == entry.prefix_ && entry.removable_; });
+  if (handlers_.size() != size_before_removal) {
+    return true;
+  }
+  return false;
+}
+
+} // namespace Server
 } // namespace Envoy
