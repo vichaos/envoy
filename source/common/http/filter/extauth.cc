@@ -13,20 +13,20 @@ namespace Http {
  *
  * When Envoy receives a request for which this filter is enabled, an
  * asynchronous request with the same HTTP method and headers, but an empty
- * body, is made to the configured external auth service. The original 
+ * body, is made to the configured external auth service. The original
  * request is stalled until the auth request completes.
  *
  * If the auth request returns HTTP 200, the original request is allowed
  * to continue. If any headers are listed in the extauth filter's "headers"
- * array, those headers will be copied from the auth response into the 
+ * array, those headers will be copied from the auth response into the
  * original request (overwriting any duplicate headers).
  *
  * If the auth request returns anything other than HTTP 200, the original
  * request is rejected. The full response from the auth service is returned
  * as the response to the rejected request.
- * 
+ *
  * Note that at present, a call to the external service is made for _every
- * request_ being routed. 
+ * request_ being routed.
  */
 
 static LowerCaseString header_to_add(std::string("x-ambassador-calltype"));
@@ -37,24 +37,22 @@ ExtAuth::ExtAuth(ExtAuthConfigConstSharedPtr config) : config_(config) {}
 ExtAuth::~ExtAuth() { ASSERT(!auth_request_); }
 
 /* dump headers for debugging */
-void ExtAuth::dumpHeaders(const char *what, HeaderMap* headers) {
+void ExtAuth::dumpHeaders(const char* what, HeaderMap* headers) {
 #ifndef NVLOG
   ENVOY_STREAM_LOG(trace, "ExtAuth headers ({}):", *callbacks_, what);
 
   headers->iterate(
-    [](const HeaderEntry& header, void* context) -> void {
-      ENVOY_STREAM_LOG(trace, "  '{}':'{}'",
-                       *static_cast<StreamDecoderFilterCallbacks*>(context),
-                       header.key().c_str(), header.value().c_str());
-    },
-    callbacks_
-  );
+      [](const HeaderEntry& header, void* context) -> void {
+        ENVOY_STREAM_LOG(trace, "  '{}':'{}'", *static_cast<StreamDecoderFilterCallbacks*>(context),
+                         header.key().c_str(), header.value().c_str());
+      },
+      callbacks_);
 #endif
 }
 
 /*
  * decodeHeaders is called at the point that the HTTP machinery handling
- * the request has parsed the HTTP headers for this request. 
+ * the request has parsed the HTTP headers for this request.
  *
  * Our primary job here is to construct the request to the auth service
  * and start it executing, but we also have to be sure to save a pointer
@@ -77,7 +75,7 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
   // Debugging.
   dumpHeaders("decodeHeaders", request_headers_);
 
-  // OK, time to get the auth-service request set up. Create a 
+  // OK, time to get the auth-service request set up. Create a
   // RequestMessageImpl to hold all the details, and start it off as a
   // copy of the incoming request's headers.
 
@@ -118,7 +116,7 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
       config_->cm_.httpAsyncClientForCluster(config_->cluster_)
           .send(std::move(reqmsg), *this, Optional<std::chrono::milliseconds>(config_->timeout_));
 
-  // It'll take some time for our auth call to complete. Stop 
+  // It'll take some time for our auth call to complete. Stop
   // filtering while we wait for it.
 
   return FilterHeadersStatus::StopIteration;
@@ -126,7 +124,7 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
 
 /*
  * decodeHeaders is called at the point that the HTTP machinery handling
- * the request has parsed the HTTP body for this request. We don't need 
+ * the request has parsed the HTTP body for this request. We don't need
  * to do anything special here; we just need to make sure that we don't
  * let things proceed until our auth call is done.
  */
@@ -140,7 +138,7 @@ FilterDataStatus ExtAuth::decodeData(Buffer::Instance&, bool) {
 
 /*
  * decodeTrailers is called at the point that the HTTP machinery handling
- * the request has parsed the HTTP trailers for this request. We don't need 
+ * the request has parsed the HTTP trailers for this request. We don't need
  * to do anything special here; we just need to make sure that we don't
  * let things proceed until our auth call is done.
  */
@@ -163,8 +161,8 @@ ExtAuthStats ExtAuth::generateStats(const std::string& prefix, Stats::Store& sto
 
 /*
  * onSuccess is called when our asynch auth request succeeds, meaning
- * "the HTTP protocol was successfully followed to completion" -- it 
- * could still be the case that the auth server gave us a failure 
+ * "the HTTP protocol was successfully followed to completion" -- it
+ * could still be the case that the auth server gave us a failure
  * response.
  */
 
@@ -194,7 +192,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
     // Bump the rejection count...
 
     config_->stats_.rq_rejected_.inc();
-    
+
     // ...and ditch our pointer to the request headers.
 
     request_headers_ = nullptr;
@@ -222,7 +220,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
   ENVOY_STREAM_LOG(debug, "ExtAuth accepting request", *callbacks_);
 
   // OK, we're going to approve this request, great! Next up: the filter can
-  // be configured to copy headers from the auth server to the requester. 
+  // be configured to copy headers from the auth server to the requester.
   // If that's configured, we need to take care of that now -- and if we actually
   // copy any headers, we'll need to be sure to invalidate the route cache.
   // (If we don't copy any headers, we should leave the route cache alone.)
@@ -232,7 +230,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
   // Do we have any headers configured to copy?
 
   if (!config_->allowed_headers_.empty()) {
-    // Yup. Let's see if any of them are present. 
+    // Yup. Let's see if any of them are present.
 
     for (std::string allowed_header : config_->allowed_headers_) {
       LowerCaseString key(allowed_header);
@@ -251,7 +249,8 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
 
           std::string valstr(value.c_str());
 
-          ENVOY_STREAM_LOG(trace, "ExtAuth allowing response header {}: {}", *callbacks_, allowed_header, valstr);
+          ENVOY_STREAM_LOG(trace, "ExtAuth allowing response header {}: {}", *callbacks_,
+                           allowed_header, valstr);
           addedHeaders = true;
           request_headers_->addCopy(key, valstr);
         }
@@ -260,7 +259,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
   }
 
   if (addedHeaders) {
-    // Yup, we added headers. Invalidate the route cache in case any of 
+    // Yup, we added headers. Invalidate the route cache in case any of
     // the headers will affect routing decisions.
 
     dumpHeaders("ExtAuth invalidating route cache", request_headers_);
@@ -302,5 +301,5 @@ void ExtAuth::setDecoderFilterCallbacks(StreamDecoderFilterCallbacks& callbacks)
   callbacks_ = &callbacks;
 }
 
-} // Http
-} // Envoy
+} // namespace Http
+} // namespace Envoy

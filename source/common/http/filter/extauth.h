@@ -13,20 +13,20 @@ namespace Http {
  *
  * When Envoy receives a request for which this filter is enabled, an
  * asynchronous request with the same HTTP method and headers, but an empty
- * body, is made to the configured external auth service. The original 
+ * body, is made to the configured external auth service. The original
  * request is stalled until the auth request completes.
  *
  * If the auth request returns HTTP 200, the original request is allowed
  * to continue. If any headers are listed in the extauth filter's "headers"
- * array, those headers will be copied from the auth response into the 
+ * array, those headers will be copied from the auth response into the
  * original request (overwriting any duplicate headers).
  *
  * If the auth request returns anything other than HTTP 200, the original
  * request is rejected. The full response from the auth service is returned
  * as the response to the rejected request.
- * 
+ *
  * Note that at present, a call to the external service is made for _every
- * request_ being routed. 
+ * request_ being routed.
  */
 
 /**
@@ -87,7 +87,7 @@ public:
   void onFailure(Http::AsyncClient::FailureReason reason) override;
 
 private:
-  void dumpHeaders(const char *what, HeaderMap* headers);
+  void dumpHeaders(const char* what, HeaderMap* headers);
 
   ExtAuthConfigConstSharedPtr config_;
   StreamDecoderFilterCallbacks* callbacks_{};
@@ -97,4 +97,4 @@ private:
 };
 
 } // Http
-} // Envoy
+} // namespace Envoy

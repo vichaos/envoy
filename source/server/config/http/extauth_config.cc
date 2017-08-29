@@ -1,4 +1,5 @@
 #include "server/config/http/extauth_config.h"
+
 #include "common/http/filter/extauth.h"
 
 namespace Envoy {
@@ -38,17 +39,14 @@ HttpFilterFactoryCb ExtAuthConfig::tryCreateFilterFactory(HttpFilterType type,
 
   json_config.validateSchema(EXTAUTH_HTTP_FILTER_SCHEMA);
 
-  std::string prefix = 
-    json_config.hasObject("path_prefix") ? json_config.getString("path_prefix") : "";
+  std::string prefix =
+      json_config.hasObject("path_prefix") ? json_config.getString("path_prefix") : "";
 
   Http::ExtAuthConfigConstSharedPtr config(new Http::ExtAuthConfig{
-      server.clusterManager(), 
-      Http::ExtAuth::generateStats(stats_prefix, server.stats()),
+      server.clusterManager(), Http::ExtAuth::generateStats(stats_prefix, server.stats()),
       json_config.getString("cluster"),
       std::chrono::milliseconds(json_config.getInteger("timeout_ms")),
-      json_config.getStringArray("allowed_headers", true),
-      prefix
-    });
+      json_config.getStringArray("allowed_headers", true), prefix});
   return [config](Http::FilterChainFactoryCallbacks& callbacks) -> void {
     callbacks.addStreamDecoderFilter(Http::StreamDecoderFilterSharedPtr{new Http::ExtAuth(config)});
   };
@@ -59,6 +57,6 @@ HttpFilterFactoryCb ExtAuthConfig::tryCreateFilterFactory(HttpFilterType type,
  */
 static RegisterHttpFilterConfigFactory<ExtAuthConfig> register_;
 
-} // Configuration
-} // Server
-} // Envoy
+} // namespace Configuration
+} // namespace Server
+} // namespace Envoy
