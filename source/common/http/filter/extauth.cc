@@ -47,21 +47,16 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
     reqmsg->headers().insertPath().value(path);
   }
 
-  // reqmsg->headers().insertMethod().value(Http::Headers::get().MethodValues.Post);
-  // reqmsg->headers().insertPath().value(std::string("/ambassador/auth"));
   reqmsg->headers().insertHost().value(config_->cluster_); // cluster name is Host: header value!
   reqmsg->headers().insertContentLength().value(uint64_t(0));
 
   reqmsg->headers().addReference(header_to_add, value_to_add.get());
 
-  // reqmsg->body() = Buffer::InstancePtr(new Buffer::OwnedImpl(request_body));
   ENVOY_STREAM_LOG(trace, "ExtAuth contacting auth server", *callbacks_);
 
   auth_request_ =
       config_->cm_.httpAsyncClientForCluster(config_->cluster_)
           .send(std::move(reqmsg), *this, Optional<std::chrono::milliseconds>(config_->timeout_));
-  // .send(...) -> onSuccess(...) or onFailure(...)
-  // This handle can be used to ->cancel() the request.
 
   // Stop until we have a result
   return FilterHeadersStatus::StopIteration;
