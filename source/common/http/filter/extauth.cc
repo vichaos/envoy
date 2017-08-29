@@ -16,15 +16,18 @@ ExtAuth::ExtAuth(ExtAuthConfigConstSharedPtr config) : config_(config) {}
 ExtAuth::~ExtAuth() { ASSERT(!auth_request_); }
 
 void ExtAuth::dumpHeaders(const char *what, HeaderMap* headers) {
-  log().info("ExtAuth headers ({}):", what);
+#ifndef NVLOG
+  ENVOY_STREAM_LOG(trace, "ExtAuth headers ({}):", *callbacks_, what);
 
   headers->iterate(
     [](const HeaderEntry& header, void* context) -> void {
-      (void)context;
-      log().trace("  '{}':'{}'",
-                  header.key().c_str(), header.value().c_str());
+      ENVOY_STREAM_LOG(trace, "  '{}':'{}'",
+                       *static_cast<StreamDecoderFilterCallbacks*>(context),
+                       header.key().c_str(), header.value().c_str());
     },
-    nullptr);
+    callbacks_
+  );
+#endif
 }
 
 FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
@@ -51,8 +54,9 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
 
   reqmsg->headers().addReference(header_to_add, value_to_add.get());
 
-  log().info("ExtAuth contacting auth server");
   // reqmsg->body() = Buffer::InstancePtr(new Buffer::OwnedImpl(request_body));
+  ENVOY_STREAM_LOG(trace, "ExtAuth contacting auth server", *callbacks_);
+
   auth_request_ =
       config_->cm_.httpAsyncClientForCluster(config_->cluster_)
           .send(std::move(reqmsg), *this, Optional<std::chrono::milliseconds>(config_->timeout_));
@@ -90,14 +94,14 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
   uint64_t response_code = Http::Utility::getResponseStatus(response->headers());
   std::string response_body(response->bodyAsString());
 
-  log().info("ExtAuth Auth responded with code {}", response_code);
+  ENVOY_STREAM_LOG(trace, "ExtAuth Auth responded with code {}", *callbacks_, response_code);
 
   if (!response_body.empty()) {
-    log().info("ExtAuth Auth said: {}", response->bodyAsString());
+    ENVOY_STREAM_LOG(trace, "ExtAuth Auth said: {}", *callbacks_, response->bodyAsString());
   }
 
   if (response_code != enumToInt(Http::Code::OK)) {
-    log().info("ExtAuth rejecting request");
+    ENVOY_STREAM_LOG(debug, "ExtAuth rejecting request", *callbacks_);
 
     config_->stats_.rq_rejected_.inc();
     request_headers_ = nullptr;
@@ -114,7 +118,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
     return;
   }
 
-  log().info("ExtAuth accepting request");
+  ENVOY_STREAM_LOG(debug, "ExtAuth accepting request", *callbacks_);
   bool addedHeaders = false;
 
   // Do we have any headers configured to copy?
@@ -165,7 +169,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
 void ExtAuth::onFailure(Http::AsyncClient::FailureReason) {
   auth_request_ = nullptr;
   request_headers_ = nullptr;
-  log().warn("ExtAuth Auth request failed");
+  ENVOY_STREAM_LOG(warn, "ExtAuth Auth request failed", *callbacks_);
   config_->stats_.rq_failed_.inc();
   Http::Utility::sendLocalReply(*callbacks_, false, Http::Code::ServiceUnavailable,
                                 std::string("Auth request failed."));
