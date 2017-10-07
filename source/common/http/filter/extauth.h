@@ -71,7 +71,7 @@ public:
   ExtAuth(ExtAuthConfigConstSharedPtr config);
   ~ExtAuth();
 
-  static ExtAuthStats generateStats(const std::string& prefix, Stats::Store& store);
+  static ExtAuthStats generateStats(const std::string& prefix, Stats::Scope& scope);
 
   // Http::StreamFilterBase
   void onDestroy() override;

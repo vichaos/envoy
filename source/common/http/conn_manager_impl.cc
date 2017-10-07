@@ -565,6 +565,15 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(ActiveStreamDecoderFilte
     state_.filter_call_state_ &= ~FilterCallState::DecodeHeaders;
     ENVOY_STREAM_LOG(trace, "decode headers called: filter={} status={}", *this,
                      static_cast<const void*>((*entry).get()), static_cast<uint64_t>(status));
+#ifndef NVLOG
+    headers.iterate(
+        [](const HeaderEntry& header, void* context) -> void {
+          ENVOY_STREAM_LOG(trace, "  H'{}':'{}'", *static_cast<ActiveStream*>(context),
+                           header.key().c_str(), header.value().c_str());
+        },
+        this);
+#endif
+
     if (!(*entry)->commonHandleAfterHeadersCallback(status) &&
         std::next(entry) != decoder_filters_.end()) {
       // Stop iteration IFF this is not the last filter. If it is the last filter, continue with
@@ -1037,14 +1046,32 @@ Tracing::Span& ConnectionManagerImpl::ActiveStreamFilterBase::activeSpan() {
 
 Router::RouteConstSharedPtr ConnectionManagerImpl::ActiveStreamFilterBase::route() {
   if (!parent_.cached_route_.valid()) {
+    ENVOY_STREAM_LOG(trace, "no route cached: filter={}", parent_, static_cast<const void*>(this));
+    parent_.request_headers_->iterate(
+        [](const HeaderEntry& header, void* vctx) -> void {
+          ConnectionManagerImpl::ActiveStreamFilterBase* self =
+              static_cast<ConnectionManagerImpl::ActiveStreamFilterBase*>(vctx);
+
+          std::string key(header.key().c_str());
+          std::string value(header.value().c_str());
+
+          ENVOY_STREAM_LOG(trace, "routing on header {}: {}", self->parent_, key, value);
+        },
+        static_cast<void*>(this));
+
     parent_.cached_route_.value(
         parent_.snapped_route_config_->route(*parent_.request_headers_, parent_.stream_id_));
+  } else {
+    ENVOY_STREAM_LOG(trace, "using cached route: filter={}", parent_,
+                     static_cast<const void*>(this));
   }
 
   return parent_.cached_route_.value();
 }
 
 void ConnectionManagerImpl::ActiveStreamFilterBase::clearRouteCache() {
+  ENVOY_STREAM_LOG(trace, "clearing route cache: filter={}", parent_,
+                   static_cast<const void*>(this));
   parent_.cached_route_ = Optional<Router::RouteConstSharedPtr>();
 }
 

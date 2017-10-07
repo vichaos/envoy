@@ -150,13 +150,9 @@ FilterTrailersStatus ExtAuth::decodeTrailers(HeaderMap&) {
   return FilterTrailersStatus::StopIteration;
 }
 
-/*
- * Generate statistics for this filter.
- */
-
-ExtAuthStats ExtAuth::generateStats(const std::string& prefix, Stats::Store& store) {
+ExtAuthStats ExtAuth::generateStats(const std::string& prefix, Stats::Scope& scope) {
   std::string final_prefix = prefix + "extauth.";
-  return {ALL_EXTAUTH_STATS(POOL_COUNTER_PREFIX(store, final_prefix))};
+  return {ALL_EXTAUTH_STATS(POOL_COUNTER_PREFIX(scope, final_prefix))};
 }
 
 /*
