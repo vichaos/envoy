@@ -21,6 +21,8 @@
 #include "test/test_common/printers.h"
 #include "test/test_common/utility.h"
 
+#include "fmt/format.h"
+
 namespace Envoy {
 FakeStream::FakeStream(FakeHttpConnection& parent, Http::StreamEncoder& encoder)
     : parent_(parent), encoder_(encoder) {
@@ -96,10 +98,10 @@ void FakeStream::waitForHeadersComplete() {
 
 void FakeStream::waitForData(Event::Dispatcher& client_dispatcher, uint64_t body_length) {
   std::unique_lock<std::mutex> lock(lock_);
-  while (bodyLength() != body_length) {
+  while (bodyLength() < body_length) {
     decoder_event_.wait_until(lock,
                               std::chrono::system_clock::now() + std::chrono::milliseconds(5));
-    if (bodyLength() != body_length) {
+    if (bodyLength() < body_length) {
       // Run the client dispatcher since we may need to process window updates, etc.
       client_dispatcher.run(Event::Dispatcher::RunType::NonBlock);
     }
@@ -123,6 +125,15 @@ void FakeStream::waitForReset() {
   while (!saw_reset_) {
     decoder_event_.wait(lock);
   }
+}
+
+void FakeStream::startGrpcStream() {
+  encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);
+}
+
+void FakeStream::finishGrpcStream(Grpc::Status::GrpcStatus status) {
+  encodeTrailers(
+      Http::TestHeaderMapImpl{{"grpc-status", std::to_string(static_cast<uint32_t>(status))}});
 }
 
 FakeHttpConnection::FakeHttpConnection(QueuedConnectionWrapperPtr connection_wrapper,
@@ -190,10 +201,16 @@ void FakeConnectionBase::waitForDisconnect(bool ignore_spurious_events) {
   ASSERT(disconnected_);
 }
 
-FakeStreamPtr FakeHttpConnection::waitForNewStream() {
+FakeStreamPtr FakeHttpConnection::waitForNewStream(bool ignore_spurious_events) {
   std::unique_lock<std::mutex> lock(lock_);
-  if (new_streams_.empty()) {
+  while (new_streams_.empty()) {
     connection_event_.wait(lock);
+    // As with waitForDisconnect, by default, waitForNewStream returns after the next event.
+    // If the caller explicitly notes other events should be ignored, it will instead actually
+    // wait for the next new stream, ignoring other events such as onData()
+    if (!ignore_spurious_events) {
+      break;
+    }
   }
 
   ASSERT(!new_streams_.empty());
@@ -235,7 +252,8 @@ FakeUpstream::FakeUpstream(Ssl::ServerContext* ssl_ctx, Network::ListenSocketPtr
     : ssl_ctx_(ssl_ctx), socket_(std::move(listen_socket)),
       api_(new Api::Impl(std::chrono::milliseconds(10000))),
       dispatcher_(api_->allocateDispatcher()),
-      handler_(new Server::ConnectionHandlerImpl(ENVOY_LOGGER(), *dispatcher_)), http_type_(type) {
+      handler_(new Server::ConnectionHandlerImpl(ENVOY_LOGGER(), *dispatcher_)), http_type_(type),
+      allow_unexpected_disconnects_(false) {
   thread_.reset(new Thread::Thread([this]() -> void { threadRoutine(); }));
   server_initialized_.waitReady();
 }
@@ -248,7 +266,8 @@ FakeUpstream::~FakeUpstream() {
 bool FakeUpstream::createFilterChain(Network::Connection& connection) {
   std::unique_lock<std::mutex> lock(lock_);
   connection.readDisable(true);
-  new_connections_.emplace_back(new QueuedConnectionWrapper(connection));
+  new_connections_.emplace_back(
+      new QueuedConnectionWrapper(connection, allow_unexpected_disconnects_));
   new_connection_event_.notify_one();
   return true;
 }

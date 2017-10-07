@@ -8,11 +8,26 @@
 #include "common/common/macros.h"
 #include "common/common/version.h"
 
+#include "fmt/format.h"
 #include "spdlog/spdlog.h"
 #include "tclap/CmdLine.h"
 
+// Can be overridden at compile time
+#ifndef ENVOY_DEFAULT_MAX_STATS
+#define ENVOY_DEFAULT_MAX_STATS 16384
+#endif
+
+// Can be overridden at compile time
+#ifndef ENVOY_DEFAULT_MAX_STAT_NAME_LENGTH
+#define ENVOY_DEFAULT_MAX_STAT_NAME_LENGTH 127
+#endif
+
+#if ENVOY_DEFAULT_MAX_STAT_NAME_LENGTH < 127
+#error "ENVOY_DEFAULT_MAX_STAT_NAME_LENGTH must be >= 127"
+#endif
+
 namespace Envoy {
-OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_version,
+OptionsImpl::OptionsImpl(int argc, char** argv, const HotRestartVersionCb& hot_restart_version_cb,
                          spdlog::level::level_enum default_log_level) {
   std::string log_levels_string = "Log levels: ";
   for (size_t i = 0; i < ARRAY_SIZE(spdlog::level::level_names); i++) {
@@ -23,15 +38,13 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
   log_levels_string += "\n[trace] and [debug] are only available on debug builds";
 
   TCLAP::CmdLine cmd("envoy", ' ', VersionInfo::version());
-  TCLAP::ValueArg<uint64_t> base_id(
+  TCLAP::ValueArg<uint32_t> base_id(
       "", "base-id", "base ID so that multiple envoys can run on the same host if needed", false, 0,
-      "uint64_t", cmd);
+      "uint32_t", cmd);
   TCLAP::ValueArg<uint32_t> concurrency("", "concurrency", "# of worker threads to run", false,
                                         std::thread::hardware_concurrency(), "uint32_t", cmd);
   TCLAP::ValueArg<std::string> config_path("c", "config-path", "Path to configuration file", false,
                                            "", "string", cmd);
-  TCLAP::ValueArg<std::string> bootstrap_path("b", "bootstrap-path", "Path to v2 bootstrap file",
-                                              false, "", "string", cmd);
   TCLAP::ValueArg<std::string> admin_address_path("", "admin-address-path", "Admin address path",
                                                   false, "", "string", cmd);
   TCLAP::ValueArg<std::string> local_address_ip_version("", "local-address-ip-version",
@@ -41,8 +54,10 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
   TCLAP::ValueArg<std::string> log_level("l", "log-level", log_levels_string, false,
                                          spdlog::level::level_names[default_log_level], "string",
                                          cmd);
-  TCLAP::ValueArg<uint64_t> restart_epoch("", "restart-epoch", "hot restart epoch #", false, 0,
-                                          "uint64_t", cmd);
+  TCLAP::ValueArg<std::string> log_path("", "log-path", "Path to logfile", false, "", "string",
+                                        cmd);
+  TCLAP::ValueArg<uint32_t> restart_epoch("", "restart-epoch", "hot restart epoch #", false, 0,
+                                          "uint32_t", cmd);
   TCLAP::SwitchArg hot_restart_version_option("", "hot-restart-version",
                                               "hot restart compatability version", cmd);
   TCLAP::ValueArg<std::string> service_cluster("", "service-cluster", "Cluster name", false, "",
@@ -51,18 +66,25 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
                                             cmd);
   TCLAP::ValueArg<std::string> service_zone("", "service-zone", "Zone name", false, "", "string",
                                             cmd);
-  TCLAP::ValueArg<uint64_t> file_flush_interval_msec("", "file-flush-interval-msec",
+  TCLAP::ValueArg<uint32_t> file_flush_interval_msec("", "file-flush-interval-msec",
                                                      "Interval for log flushing in msec", false,
-                                                     10000, "uint64_t", cmd);
-  TCLAP::ValueArg<uint64_t> drain_time_s("", "drain-time-s", "Hot restart drain time in seconds",
-                                         false, 600, "uint64_t", cmd);
-  TCLAP::ValueArg<uint64_t> parent_shutdown_time_s("", "parent-shutdown-time-s",
+                                                     10000, "uint32_t", cmd);
+  TCLAP::ValueArg<uint32_t> drain_time_s("", "drain-time-s", "Hot restart drain time in seconds",
+                                         false, 600, "uint32_t", cmd);
+  TCLAP::ValueArg<uint32_t> parent_shutdown_time_s("", "parent-shutdown-time-s",
                                                    "Hot restart parent shutdown time in seconds",
-                                                   false, 900, "uint64_t", cmd);
+                                                   false, 900, "uint32_t", cmd);
   TCLAP::ValueArg<std::string> mode("", "mode",
                                     "One of 'serve' (default; validate configs and then serve "
                                     "traffic normally) or 'validate' (validate configs and exit).",
                                     false, "serve", "string", cmd);
+  TCLAP::ValueArg<uint64_t> max_stats("", "max-stats",
+                                      "Maximum number of stats guages and counters "
+                                      "that can be allocated in shared memory.",
+                                      false, ENVOY_DEFAULT_MAX_STATS, "uint64_t", cmd);
+  TCLAP::ValueArg<uint64_t> max_stat_name_len("", "max-stat-name-len",
+                                              "Maximum name length for a stat", false,
+                                              ENVOY_DEFAULT_MAX_STAT_NAME_LENGTH, "uint64_t", cmd);
 
   try {
     cmd.parse(argc, argv);
@@ -71,8 +93,14 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
     exit(1);
   }
 
+  if (max_stat_name_len.getValue() < 127) {
+    std::cerr << "error: the 'max-stat-name-len' value specified (" << max_stat_name_len.getValue()
+              << ") is less than the minimum value of 127" << std::endl;
+    exit(1);
+  }
+
   if (hot_restart_version_option.getValue()) {
-    std::cerr << hot_restart_version;
+    std::cerr << hot_restart_version_cb(max_stats.getValue(), max_stat_name_len.getValue());
     exit(0);
   }
 
@@ -106,8 +134,8 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
   base_id_ = base_id.getValue() * 10;
   concurrency_ = concurrency.getValue();
   config_path_ = config_path.getValue();
-  bootstrap_path_ = bootstrap_path.getValue();
   admin_address_path_ = admin_address_path.getValue();
+  log_path_ = log_path.getValue();
   restart_epoch_ = restart_epoch.getValue();
   service_cluster_ = service_cluster.getValue();
   service_node_ = service_node.getValue();
@@ -115,5 +143,7 @@ OptionsImpl::OptionsImpl(int argc, char** argv, const std::string& hot_restart_v
   file_flush_interval_msec_ = std::chrono::milliseconds(file_flush_interval_msec.getValue());
   drain_time_ = std::chrono::seconds(drain_time_s.getValue());
   parent_shutdown_time_ = std::chrono::seconds(parent_shutdown_time_s.getValue());
+  max_stats_ = max_stats.getValue();
+  max_stat_name_length_ = max_stat_name_len.getValue();
 }
 } // namespace Envoy

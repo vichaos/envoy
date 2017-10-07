@@ -20,7 +20,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::InSequence;
 using testing::Invoke;
 using testing::Return;
@@ -28,6 +27,7 @@ using testing::ReturnRef;
 using testing::SaveArg;
 using testing::_;
 
+namespace Envoy {
 namespace Router {
 namespace {
 
@@ -76,6 +76,7 @@ public:
                                            runtime_, cm_, store_, "foo.", init_manager_,
                                            *route_config_provider_manager_);
     expectRequest();
+    EXPECT_EQ("", rds_->versionInfo());
     init_manager_.initialize();
   }
 
@@ -147,8 +148,8 @@ TEST_F(RdsImplTest, LocalInfoNotDefined) {
     }
     )EOF";
 
-  local_info_.cluster_name_ = "";
-  local_info_.node_name_ = "";
+  local_info_.node_.set_cluster("");
+  local_info_.node_.set_id("");
   EXPECT_THROW(RouteConfigProviderUtil::create(parseHttpConnectionManagerFromJson(config_json),
                                                runtime_, cm_, store_, "foo.", init_manager_,
                                                *route_config_provider_manager_),
@@ -202,14 +203,17 @@ TEST_F(RdsImplTest, Basic) {
 
   // Test Admin /routes handler. There should be no route table to dump.
   const std::string& routes_expected_output_no_routes = R"EOF({
+    "version_info": "",
     "route_config_name": "foo_route_config",
     "cluster_name": "foo_cluster",
     "route_table_dump": {}
-})EOF";
-
+}
+)EOF";
+  EXPECT_EQ("", rds_->versionInfo());
   EXPECT_EQ(Http::Code::OK, handler_callback_("/routes", data));
   EXPECT_EQ(routes_expected_output_no_routes, TestUtility::bufferToString(data));
   data.drain(data.length());
+  EXPECT_EQ(0UL, store_.gauge("foo.rds.foo_route_config.version").value());
 
   // Initial request.
   const std::string response1_json = R"EOF(
@@ -229,14 +233,18 @@ TEST_F(RdsImplTest, Basic) {
 
   // Test Admin /routes handler. Now we should have an empty route table, with exception of name.
   const std::string routes_expected_output_only_name = R"EOF({
+    "version_info": "hash_15ed54077da94d8b",
     "route_config_name": "foo_route_config",
     "cluster_name": "foo_cluster",
     "route_table_dump": {"name":"foo_route_config"}
-})EOF";
+}
+)EOF";
 
+  EXPECT_EQ("hash_15ed54077da94d8b", rds_->versionInfo());
   EXPECT_EQ(Http::Code::OK, handler_callback_("/routes", data));
   EXPECT_EQ(routes_expected_output_only_name, TestUtility::bufferToString(data));
   data.drain(data.length());
+  EXPECT_EQ(1580011435426663819U, store_.gauge("foo.rds.foo_route_config.version").value());
 
   expectRequest();
   interval_timer_->callback_();
@@ -254,6 +262,7 @@ TEST_F(RdsImplTest, Basic) {
   EXPECT_EQ(Http::Code::OK, handler_callback_("/routes", data));
   EXPECT_EQ(routes_expected_output_only_name, TestUtility::bufferToString(data));
   data.drain(data.length());
+  EXPECT_EQ(1580011435426663819U, store_.gauge("foo.rds.foo_route_config.version").value());
 
   expectRequest();
   interval_timer_->callback_();
@@ -292,6 +301,7 @@ TEST_F(RdsImplTest, Basic) {
   EXPECT_CALL(cm_, get("bar")).Times(0);
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   callbacks_->onSuccess(std::move(message));
+  EXPECT_EQ("hash_7a3f97b327d08382", rds_->versionInfo());
   EXPECT_EQ("foo", rds_->config()
                        ->route(Http::TestHeaderMapImpl{{":authority", "foo"}, {":path", "/foo"}}, 0)
                        ->routeEntry()
@@ -300,14 +310,17 @@ TEST_F(RdsImplTest, Basic) {
   // Test Admin /routes handler. The route table should now have the information given in
   // response2_json.
   const std::string routes_expected_output_full_table = R"EOF({
+    "version_info": "hash_7a3f97b327d08382",
     "route_config_name": "foo_route_config",
     "cluster_name": "foo_cluster",
     "route_table_dump": {"name":"foo_route_config","virtual_hosts":[{"name":"local_service","domains":["*"],"routes":[{"match":{"prefix":"/foo"},"route":{"cluster_header":":authority"}},{"match":{"prefix":"/bar"},"route":{"cluster":"bar"}}]}]}
-})EOF";
+}
+)EOF";
 
   EXPECT_EQ(Http::Code::OK, handler_callback_("/routes", data));
   EXPECT_EQ(routes_expected_output_full_table, TestUtility::bufferToString(data));
   data.drain(data.length());
+  EXPECT_EQ(8808926191882896258U, store_.gauge("foo.rds.foo_route_config.version").value());
 
   // Test that we get the same dump if we specify the route name.
   EXPECT_EQ(Http::Code::OK, handler_callback_("/routes?route_config_name=foo_route_config", data));
@@ -332,9 +345,10 @@ TEST_F(RdsImplTest, Basic) {
   // Old config use count should be 1 now.
   EXPECT_EQ(1, config.use_count());
 
-  EXPECT_EQ(2UL, store_.counter("foo.rds.config_reload").value());
-  EXPECT_EQ(3UL, store_.counter("foo.rds.update_attempt").value());
-  EXPECT_EQ(3UL, store_.counter("foo.rds.update_success").value());
+  EXPECT_EQ(2UL, store_.counter("foo.rds.foo_route_config.config_reload").value());
+  EXPECT_EQ(3UL, store_.counter("foo.rds.foo_route_config.update_attempt").value());
+  EXPECT_EQ(3UL, store_.counter("foo.rds.foo_route_config.update_success").value());
+  EXPECT_EQ(8808926191882896258U, store_.gauge("foo.rds.foo_route_config.version").value());
 }
 
 TEST_F(RdsImplTest, Failure) {
@@ -362,8 +376,8 @@ TEST_F(RdsImplTest, Failure) {
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   callbacks_->onFailure(Http::AsyncClient::FailureReason::Reset);
 
-  EXPECT_EQ(2UL, store_.counter("foo.rds.update_attempt").value());
-  EXPECT_EQ(2UL, store_.counter("foo.rds.update_failure").value());
+  EXPECT_EQ(2UL, store_.counter("foo.rds.foo_route_config.update_attempt").value());
+  EXPECT_EQ(2UL, store_.counter("foo.rds.foo_route_config.update_failure").value());
 }
 
 TEST_F(RdsImplTest, FailureArray) {
@@ -383,8 +397,8 @@ TEST_F(RdsImplTest, FailureArray) {
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   callbacks_->onSuccess(std::move(message));
 
-  EXPECT_EQ(1UL, store_.counter("foo.rds.update_attempt").value());
-  EXPECT_EQ(1UL, store_.counter("foo.rds.update_failure").value());
+  EXPECT_EQ(1UL, store_.counter("foo.rds.foo_route_config.update_attempt").value());
+  EXPECT_EQ(1UL, store_.counter("foo.rds.foo_route_config.update_failure").value());
 }
 
 class RouteConfigProviderManagerImplTest : public testing::Test {
@@ -467,6 +481,55 @@ TEST_F(RouteConfigProviderManagerImplTest, Basic) {
 
   configured_providers = route_config_provider_manager_.rdsRouteConfigProviders();
   EXPECT_EQ(0UL, configured_providers.size());
+}
+
+TEST_F(RouteConfigProviderManagerImplTest, onConfigUpdateEmpty) {
+  std::string config_json = R"EOF(
+    {
+      "cluster": "foo_cluster",
+      "route_config_name": "foo_route_config",
+      "refresh_delay_ms": 1000
+    }
+    )EOF";
+
+  Json::ObjectSharedPtr config = Json::Factory::loadFromString(config_json);
+  envoy::api::v2::filter::Rds rds;
+  Envoy::Config::Utility::translateRdsConfig(*config, rds);
+
+  // Get a RouteConfigProvider. This one should create an entry in the RouteConfigProviderManager.
+  RouteConfigProviderSharedPtr provider = route_config_provider_manager_.getRouteConfigProvider(
+      rds, cm_, store_, "foo_prefix.", init_manager_);
+  init_manager_.initialize();
+  auto& provider_impl = dynamic_cast<RdsRouteConfigProviderImpl&>(*provider.get());
+  EXPECT_CALL(init_manager_.initialized_, ready());
+  provider_impl.onConfigUpdate({});
+  EXPECT_EQ(1UL, store_.counter("foo_prefix.rds.foo_route_config.update_empty").value());
+}
+
+TEST_F(RouteConfigProviderManagerImplTest, onConfigUpdateWrongSize) {
+  std::string config_json = R"EOF(
+    {
+      "cluster": "foo_cluster",
+      "route_config_name": "foo_route_config",
+      "refresh_delay_ms": 1000
+    }
+    )EOF";
+
+  Json::ObjectSharedPtr config = Json::Factory::loadFromString(config_json);
+  envoy::api::v2::filter::Rds rds;
+  Envoy::Config::Utility::translateRdsConfig(*config, rds);
+
+  // Get a RouteConfigProvider. This one should create an entry in the RouteConfigProviderManager.
+  RouteConfigProviderSharedPtr provider = route_config_provider_manager_.getRouteConfigProvider(
+      rds, cm_, store_, "foo_prefix.", init_manager_);
+  init_manager_.initialize();
+  auto& provider_impl = dynamic_cast<RdsRouteConfigProviderImpl&>(*provider.get());
+  Protobuf::RepeatedPtrField<envoy::api::v2::RouteConfiguration> route_configs;
+  route_configs.Add();
+  route_configs.Add();
+  EXPECT_CALL(init_manager_.initialized_, ready());
+  EXPECT_THROW_WITH_MESSAGE(provider_impl.onConfigUpdate(route_configs), EnvoyException,
+                            "Unexpected RDS resource length: 2");
 }
 
 } // namespace

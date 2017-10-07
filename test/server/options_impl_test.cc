@@ -19,8 +19,9 @@ std::unique_ptr<OptionsImpl> createOptionsImpl(const std::string& args) {
   for (const std::string& s : words) {
     argv.push_back(s.c_str());
   }
-  return std::unique_ptr<OptionsImpl>(
-      new OptionsImpl(argv.size(), const_cast<char**>(&argv[0]), "1", spdlog::level::warn));
+  return std::unique_ptr<OptionsImpl>(new OptionsImpl(argv.size(), const_cast<char**>(&argv[0]),
+                                                      [](uint64_t, uint64_t) { return "1"; },
+                                                      spdlog::level::warn));
 }
 
 TEST(OptionsImplDeathTest, HotRestartVersion) {
@@ -40,7 +41,7 @@ TEST(OptionsImplTest, All) {
       "envoy --mode validate --concurrency 2 -c hello --admin-address-path path --restart-epoch 1 "
       "--local-address-ip-version v6 -l info --service-cluster cluster --service-node node "
       "--service-zone zone --file-flush-interval-msec 9000 --drain-time-s 60 "
-      "--parent-shutdown-time-s 90");
+      "--parent-shutdown-time-s 90 --log-path /foo/bar");
   EXPECT_EQ(Server::Mode::Validate, options->mode());
   EXPECT_EQ(2U, options->concurrency());
   EXPECT_EQ("hello", options->configPath());
@@ -48,6 +49,7 @@ TEST(OptionsImplTest, All) {
   EXPECT_EQ(Network::Address::IpVersion::v6, options->localAddressIpVersion());
   EXPECT_EQ(1U, options->restartEpoch());
   EXPECT_EQ(spdlog::level::info, options->logLevel());
+  EXPECT_EQ("/foo/bar", options->logPath());
   EXPECT_EQ("cluster", options->serviceClusterName());
   EXPECT_EQ("node", options->serviceNodeName());
   EXPECT_EQ("zone", options->serviceZone());
@@ -68,5 +70,10 @@ TEST(OptionsImplTest, DefaultParams) {
 TEST(OptionsImplTest, BadCliOption) {
   EXPECT_DEATH(createOptionsImpl("envoy -c hello --local-address-ip-version foo"),
                "error: unknown IP address version 'foo'");
+}
+
+TEST(OptionsImplTest, BadStatNameLenOption) {
+  EXPECT_DEATH(createOptionsImpl("envoy --max-stat-name-len 1"),
+               "error: the 'max-stat-name-len' value specified");
 }
 } // namespace Envoy

@@ -116,9 +116,12 @@ public:
    * @return Server::Admin& the server's global admin HTTP endpoint.
    */
   virtual Server::Admin& admin() PURE;
-};
 
-enum class NetworkFilterType { Read, Write, Both };
+  /**
+   * @return Stats::Scope& the listener's stats scope.
+   */
+  virtual Stats::Scope& listenerScope() PURE;
+};
 
 /**
  * This function is used to wrap the creation of a network filter chain for new connections as
@@ -174,14 +177,7 @@ public:
    * produced by the factory.
    */
   virtual std::string name() PURE;
-
-  /**
-   * @return NetworkFilterType the type of filter.
-   */
-  virtual NetworkFilterType type() PURE;
 };
-
-enum class HttpFilterType { Decoder, Encoder, Both };
 
 /**
  * This function is used to wrap the creation of an HTTP filter chain for new streams as they
@@ -243,11 +239,6 @@ public:
    * produced by the factory.
    */
   virtual std::string name() PURE;
-
-  /**
-   * @return HttpFilterType the type of filter.
-   */
-  virtual HttpFilterType type() PURE;
 };
 
 } // namespace Configuration

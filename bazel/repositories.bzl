@@ -21,10 +21,14 @@ def _repository_impl(ctxt):
         environment = environment,
         quiet = False,
     )
-    print("External dep build exited with return code: %d" % result.return_code)
     print(result.stdout)
     print(result.stderr)
+    print("External dep build exited with return code: %d" % result.return_code)
     if result.return_code != 0:
+        print("\033[31;1m\033[48;5;226m External dependency build failed, check above log " +
+              "for errors and ensure all prerequisites at " +
+              "https://github.com/envoyproxy/envoy/blob/master/bazel/README.md#quick-start-bazel-build-for-developers are met.")
+        # This error message doesn't appear to the user :( https://github.com/bazelbuild/bazel/issues/3683
         fail("External dep build failed")
 
 def _protobuf_repository_impl(ctxt):
@@ -108,19 +112,21 @@ def envoy_api_deps(skip_targets):
     native.git_repository(
         name = "envoy_api",
         remote = REPO_LOCATIONS["envoy_api"],
-        commit = "b9e89d760d4849812b43a0979aa756137563bf83",
+        commit = "67ceb6429aca38aecd722494baa0e499dadd3caf",
     )
     api_bind_targets = [
         "address",
         "base",
         "bootstrap",
+        "discovery",
         "cds",
+        "discovery",
         "eds",
         "health_check",
         "lds",
         "protocol",
         "rds",
-        "tls_context",
+        "sds",
     ]
     for t in api_bind_targets:
         native.bind(

@@ -12,7 +12,7 @@
 #include "common/common/utility.h"
 #include "common/config/utility.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Stats {
@@ -60,16 +60,17 @@ UdpStatsdSink::UdpStatsdSink(ThreadLocal::SlotAllocator& tls,
   });
 }
 
-void UdpStatsdSink::flushCounter(const std::string& name, uint64_t delta) {
-  tls_->getTyped<Writer>().writeCounter(name, delta);
+void UdpStatsdSink::flushCounter(const Counter& counter, uint64_t delta) {
+  tls_->getTyped<Writer>().writeCounter(counter.name(), delta);
 }
 
-void UdpStatsdSink::flushGauge(const std::string& name, uint64_t value) {
-  tls_->getTyped<Writer>().writeGauge(name, value);
+void UdpStatsdSink::flushGauge(const Gauge& gauge, uint64_t value) {
+  tls_->getTyped<Writer>().writeGauge(gauge.name(), value);
 }
 
-void UdpStatsdSink::onTimespanComplete(const std::string& name, std::chrono::milliseconds ms) {
-  tls_->getTyped<Writer>().writeTimer(name, ms);
+void UdpStatsdSink::onHistogramComplete(const Histogram& histogram, uint64_t value) {
+  // For statsd histograms are all timers.
+  tls_->getTyped<Writer>().writeTimer(histogram.name(), std::chrono::milliseconds(value));
 }
 
 char TcpStatsdSink::STAT_PREFIX[] = "envoy.";
@@ -201,10 +202,11 @@ void TcpStatsdSink::TlsSink::write(Buffer::Instance& buffer) {
 
     connection_ = std::move(info.connection_);
     connection_->addConnectionCallbacks(*this);
-    connection_->setBufferStats({parent_.cluster_info_->stats().upstream_cx_rx_bytes_total_,
-                                 parent_.cluster_info_->stats().upstream_cx_rx_bytes_buffered_,
-                                 parent_.cluster_info_->stats().upstream_cx_tx_bytes_total_,
-                                 parent_.cluster_info_->stats().upstream_cx_tx_bytes_buffered_});
+    connection_->setConnectionStats({parent_.cluster_info_->stats().upstream_cx_rx_bytes_total_,
+                                     parent_.cluster_info_->stats().upstream_cx_rx_bytes_buffered_,
+                                     parent_.cluster_info_->stats().upstream_cx_tx_bytes_total_,
+                                     parent_.cluster_info_->stats().upstream_cx_tx_bytes_buffered_,
+                                     &parent_.cluster_info_->stats().bind_errors_});
     connection_->connect();
   }
 

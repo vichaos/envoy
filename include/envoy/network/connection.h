@@ -72,11 +72,13 @@ class Connection : public Event::DeferredDeletable, public FilterManager {
 public:
   enum class State { Open, Closing, Closed };
 
-  struct BufferStats {
+  struct ConnectionStats {
     Stats::Counter& read_total_;
     Stats::Gauge& read_current_;
     Stats::Counter& write_total_;
     Stats::Gauge& write_current_;
+    // Counter* as this is an optional counter.  Bind errors will not be tracked if this is nullptr.
+    Stats::Counter* bind_errors_;
   };
 
   virtual ~Connection() {}
@@ -122,6 +124,15 @@ public:
   virtual void readDisable(bool disable) PURE;
 
   /**
+   * Set if Envoy should detect TCP connection close when readDisable(true) is called.
+   * By default, this is true on newly created connections.
+   *
+   * @param should_detect supplies if disconnects should be detected when the connection has been
+   * read disabled
+   */
+  virtual void detectEarlyCloseWhenReadDisabled(bool should_detect) PURE;
+
+  /**
    * @return bool whether reading is enabled on the connection.
    */
   virtual bool readEnabled() const PURE;
@@ -140,11 +151,11 @@ public:
   virtual const Address::Instance& localAddress() const PURE;
 
   /**
-   * Set the buffer stats to update when the connection's read/write buffers change. Note that
-   * for performance reasons these stats are eventually consistent and may not always accurately
-   * represent the buffer contents at any given point in time.
+   * Set the stats to update for various connection state changes. Note that for performance reasons
+   * these stats are eventually consistent and may not always accurately represent the connection
+   * state at any given point in time.
    */
-  virtual void setBufferStats(const BufferStats& stats) PURE;
+  virtual void setConnectionStats(const ConnectionStats& stats) PURE;
 
   /**
    * @return the SSL connection data if this is an SSL connection, or nullptr if it is not.

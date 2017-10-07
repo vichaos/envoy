@@ -13,6 +13,7 @@
 #include "envoy/http/codec.h"
 #include "envoy/network/connection.h"
 #include "envoy/ssl/context.h"
+#include "envoy/upstream/health_check_host_monitor.h"
 #include "envoy/upstream/load_balancer_type.h"
 #include "envoy/upstream/outlier_detection.h"
 #include "envoy/upstream/resource_manager.h"
@@ -80,11 +81,19 @@ public:
   virtual bool healthy() const PURE;
 
   /**
-   * Set the host's outlier detector. Outlier detectors are assumed to be thread safe, however
-   * a new outlier detector must be installed before the host is used across threads. Thus,
+   * Set the host's health checker monitor. Monitors are assumed to be thread safe, however
+   * a new monitor must be installed before the host is used across threads. Thus,
    * this routine should only be called on the main thread before the host is used across threads.
    */
-  virtual void setOutlierDetector(Outlier::DetectorHostSinkPtr&& outlier_detector) PURE;
+  virtual void setHealthChecker(HealthCheckHostMonitorPtr&& health_checker) PURE;
+
+  /**
+   * Set the host's outlier detector monitor. Outlier detector monitors are assumed to be thread
+   * safe, however a new outlier detector monitor must be installed before the host is used across
+   * threads. Thus, this routine should only be called on the main thread before the host is used
+   * across threads.
+   */
+  virtual void setOutlierDetector(Outlier::DetectorHostMonitorPtr&& outlier_detector) PURE;
 
   /**
    * @return the current load balancing weight of the host, in the range 1-100.
@@ -147,90 +156,110 @@ public:
   virtual const std::vector<HostSharedPtr>& healthyHosts() const PURE;
 
   /**
-   * @return hosts per zone, index 0 is dedicated to local zone hosts.
-   * If there are no hosts in local zone for upstream cluster hostPerZone() will @return
+   * @return hosts per locality, index 0 is dedicated to local locality hosts.
+   * If there are no hosts in local locality for upstream cluster hostsPerLocality() will @return
    * empty vector.
    *
-   * Note, that we sort zones in alphabetical order starting from index 1.
+   * Note, that we sort localities in lexicographic order starting from index 1.
    */
-  virtual const std::vector<std::vector<HostSharedPtr>>& hostsPerZone() const PURE;
+  virtual const std::vector<std::vector<HostSharedPtr>>& hostsPerLocality() const PURE;
 
   /**
-   * @return same as hostsPerZone but only contains healthy hosts.
+   * @return same as hostsPerLocality but only contains healthy hosts.
    */
-  virtual const std::vector<std::vector<HostSharedPtr>>& healthyHostsPerZone() const PURE;
+  virtual const std::vector<std::vector<HostSharedPtr>>& healthyHostsPerLocality() const PURE;
 };
 
 /**
  * All cluster stats. @see stats_macros.h
  */
 // clang-format off
-#define ALL_CLUSTER_STATS(COUNTER, GAUGE, TIMER)                                                   \
-  COUNTER(lb_healthy_panic)                                                                        \
-  COUNTER(lb_local_cluster_not_ok)                                                                 \
-  COUNTER(lb_recalculate_zone_structures)                                                          \
-  COUNTER(lb_zone_cluster_too_small)                                                               \
-  COUNTER(lb_zone_no_capacity_left)                                                                \
-  COUNTER(lb_zone_number_differs)                                                                  \
-  COUNTER(lb_zone_routing_all_directly)                                                            \
-  COUNTER(lb_zone_routing_sampled)                                                                 \
-  COUNTER(lb_zone_routing_cross_zone)                                                              \
-  COUNTER(upstream_cx_total)                                                                       \
-  GAUGE  (upstream_cx_active)                                                                      \
-  COUNTER(upstream_cx_http1_total)                                                                 \
-  COUNTER(upstream_cx_http2_total)                                                                 \
-  COUNTER(upstream_cx_connect_fail)                                                                \
-  COUNTER(upstream_cx_connect_timeout)                                                             \
-  COUNTER(upstream_cx_overflow)                                                                    \
-  TIMER  (upstream_cx_connect_ms)                                                                  \
-  TIMER  (upstream_cx_length_ms)                                                                   \
-  COUNTER(upstream_cx_destroy)                                                                     \
-  COUNTER(upstream_cx_destroy_local)                                                               \
-  COUNTER(upstream_cx_destroy_remote)                                                              \
-  COUNTER(upstream_cx_destroy_with_active_rq)                                                      \
-  COUNTER(upstream_cx_destroy_local_with_active_rq)                                                \
-  COUNTER(upstream_cx_destroy_remote_with_active_rq)                                               \
-  COUNTER(upstream_cx_close_notify)                                                                \
-  COUNTER(upstream_cx_rx_bytes_total)                                                              \
-  GAUGE  (upstream_cx_rx_bytes_buffered)                                                           \
-  COUNTER(upstream_cx_tx_bytes_total)                                                              \
-  GAUGE  (upstream_cx_tx_bytes_buffered)                                                           \
-  COUNTER(upstream_cx_protocol_error)                                                              \
-  COUNTER(upstream_cx_max_requests)                                                                \
-  COUNTER(upstream_cx_none_healthy)                                                                \
-  COUNTER(upstream_rq_total)                                                                       \
-  GAUGE  (upstream_rq_active)                                                                      \
-  COUNTER(upstream_rq_pending_total)                                                               \
-  COUNTER(upstream_rq_pending_overflow)                                                            \
-  COUNTER(upstream_rq_pending_failure_eject)                                                       \
-  GAUGE  (upstream_rq_pending_active)                                                              \
-  COUNTER(upstream_rq_cancelled)                                                                   \
-  COUNTER(upstream_rq_maintenance_mode)                                                            \
-  COUNTER(upstream_rq_timeout)                                                                     \
-  COUNTER(upstream_rq_per_try_timeout)                                                             \
-  COUNTER(upstream_rq_rx_reset)                                                                    \
-  COUNTER(upstream_rq_tx_reset)                                                                    \
-  COUNTER(upstream_rq_retry)                                                                       \
-  COUNTER(upstream_rq_retry_success)                                                               \
-  COUNTER(upstream_rq_retry_overflow)                                                              \
-  COUNTER(upstream_flow_control_paused_reading_total)                                              \
-  COUNTER(upstream_flow_control_resumed_reading_total)                                             \
-  COUNTER(upstream_flow_control_backed_up_total)                                                   \
-  COUNTER(upstream_flow_control_drained_total)                                                     \
-  GAUGE  (max_host_weight)                                                                         \
-  COUNTER(membership_change)                                                                       \
-  GAUGE  (membership_healthy)                                                                      \
-  GAUGE  (membership_total)                                                                        \
-  COUNTER(update_attempt)                                                                          \
-  COUNTER(update_success)                                                                          \
-  COUNTER(update_failure)
+#define ALL_CLUSTER_STATS(COUNTER, GAUGE, HISTOGRAM)                                               \
+  COUNTER  (lb_healthy_panic)                                                                      \
+  COUNTER  (lb_local_cluster_not_ok)                                                               \
+  COUNTER  (lb_recalculate_zone_structures)                                                        \
+  COUNTER  (lb_zone_cluster_too_small)                                                             \
+  COUNTER  (lb_zone_no_capacity_left)                                                              \
+  COUNTER  (lb_zone_number_differs)                                                                \
+  COUNTER  (lb_zone_routing_all_directly)                                                          \
+  COUNTER  (lb_zone_routing_sampled)                                                               \
+  COUNTER  (lb_zone_routing_cross_zone)                                                            \
+  COUNTER  (upstream_cx_total)                                                                     \
+  GAUGE    (upstream_cx_active)                                                                    \
+  COUNTER  (upstream_cx_http1_total)                                                               \
+  COUNTER  (upstream_cx_http2_total)                                                               \
+  COUNTER  (upstream_cx_connect_fail)                                                              \
+  COUNTER  (upstream_cx_connect_timeout)                                                           \
+  COUNTER  (upstream_cx_overflow)                                                                  \
+  HISTOGRAM(upstream_cx_connect_ms)                                                                \
+  HISTOGRAM(upstream_cx_length_ms)                                                                 \
+  COUNTER  (upstream_cx_destroy)                                                                   \
+  COUNTER  (upstream_cx_destroy_local)                                                             \
+  COUNTER  (upstream_cx_destroy_remote)                                                            \
+  COUNTER  (upstream_cx_destroy_with_active_rq)                                                    \
+  COUNTER  (upstream_cx_destroy_local_with_active_rq)                                              \
+  COUNTER  (upstream_cx_destroy_remote_with_active_rq)                                             \
+  COUNTER  (upstream_cx_close_notify)                                                              \
+  COUNTER  (upstream_cx_rx_bytes_total)                                                            \
+  GAUGE    (upstream_cx_rx_bytes_buffered)                                                         \
+  COUNTER  (upstream_cx_tx_bytes_total)                                                            \
+  GAUGE    (upstream_cx_tx_bytes_buffered)                                                         \
+  COUNTER  (upstream_cx_protocol_error)                                                            \
+  COUNTER  (upstream_cx_max_requests)                                                              \
+  COUNTER  (upstream_cx_none_healthy)                                                              \
+  COUNTER  (upstream_rq_total)                                                                     \
+  GAUGE    (upstream_rq_active)                                                                    \
+  COUNTER  (upstream_rq_pending_total)                                                             \
+  COUNTER  (upstream_rq_pending_overflow)                                                          \
+  COUNTER  (upstream_rq_pending_failure_eject)                                                     \
+  GAUGE    (upstream_rq_pending_active)                                                            \
+  COUNTER  (upstream_rq_cancelled)                                                                 \
+  COUNTER  (upstream_rq_maintenance_mode)                                                          \
+  COUNTER  (upstream_rq_timeout)                                                                   \
+  COUNTER  (upstream_rq_per_try_timeout)                                                           \
+  COUNTER  (upstream_rq_rx_reset)                                                                  \
+  COUNTER  (upstream_rq_tx_reset)                                                                  \
+  COUNTER  (upstream_rq_retry)                                                                     \
+  COUNTER  (upstream_rq_retry_success)                                                             \
+  COUNTER  (upstream_rq_retry_overflow)                                                            \
+  COUNTER  (upstream_flow_control_paused_reading_total)                                            \
+  COUNTER  (upstream_flow_control_resumed_reading_total)                                           \
+  COUNTER  (upstream_flow_control_backed_up_total)                                                 \
+  COUNTER  (upstream_flow_control_drained_total)                                                   \
+  COUNTER  (bind_errors)                                                                           \
+  GAUGE    (max_host_weight)                                                                       \
+  COUNTER  (membership_change)                                                                     \
+  GAUGE    (membership_healthy)                                                                    \
+  GAUGE    (membership_total)                                                                      \
+  COUNTER  (retry_or_shadow_abandoned)                                                             \
+  COUNTER  (update_attempt)                                                                        \
+  COUNTER  (update_success)                                                                        \
+  COUNTER  (update_failure)                                                                        \
+  COUNTER  (update_empty)                                                                          \
+  GAUGE    (version)
+// clang-format on
+
+/**
+ * All cluster load report stats. These are only use for EDS load reporting and not sent to the
+ * stats sink. See envoy.api.v2.ClusterStats for the definition of upstream_rq_dropped.
+ */
+// clang-format off
+#define ALL_CLUSTER_LOAD_REPORT_STATS(COUNTER)                                                     \
+  COUNTER (upstream_rq_dropped)
 // clang-format on
 
 /**
  * Struct definition for all cluster stats. @see stats_macros.h
  */
 struct ClusterStats {
-  ALL_CLUSTER_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT, GENERATE_TIMER_STRUCT)
+  ALL_CLUSTER_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT, GENERATE_HISTOGRAM_STRUCT)
+};
+
+/**
+ * Struct definition for all cluster load report stats. @see stats_macros.h
+ */
+struct ClusterLoadReportStats {
+  ALL_CLUSTER_LOAD_REPORT_STATS(GENERATE_COUNTER_STRUCT)
 };
 
 /**
@@ -318,6 +347,11 @@ public:
    *         stats that will be freed when the cluster is removed.
    */
   virtual Stats::Scope& statsScope() const PURE;
+
+  /**
+   * @return ClusterLoadReportStats& strongly named load report stats for this cluster.
+   */
+  virtual ClusterLoadReportStats& loadReportStats() const PURE;
 
   /**
    * Returns an optional source address for upstream connections to bind to.

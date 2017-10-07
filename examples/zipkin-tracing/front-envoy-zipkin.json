@@ -9,7 +9,7 @@
           "config": {
             "generate_request_id": true,
             "tracing": {
-              "operation_name": "ingress"
+              "operation_name": "egress"
             }, 
             "codec_type": "auto",
             "stat_prefix": "ingress_http",
@@ -21,7 +21,10 @@
                   "routes": [
                     {
                       "prefix": "/",
-                      "cluster": "service1"
+                      "cluster": "service1",
+                      "decorator": {
+                        "operation": "checkAvailability"
+                      }
                     }
                   ]
                 }

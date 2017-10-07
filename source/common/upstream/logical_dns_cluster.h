@@ -50,7 +50,9 @@ private:
   struct LogicalHost : public HostImpl {
     LogicalHost(ClusterInfoConstSharedPtr cluster, const std::string& hostname,
                 Network::Address::InstanceConstSharedPtr address, LogicalDnsCluster& parent)
-        : HostImpl(cluster, hostname, address, false, 1, ""), parent_(parent) {}
+        : HostImpl(cluster, hostname, address, envoy::api::v2::Metadata::default_instance(), 1,
+                   envoy::api::v2::Locality().default_instance()),
+          parent_(parent) {}
 
     // Upstream::Host
     CreateConnectionData createConnection(Event::Dispatcher& dispatcher) const override;
@@ -65,14 +67,22 @@ private:
 
     // Upstream:HostDescription
     bool canary() const override { return false; }
+    const envoy::api::v2::Metadata& metadata() const override {
+      return envoy::api::v2::Metadata::default_instance();
+    }
     const ClusterInfo& cluster() const override { return logical_host_->cluster(); }
-    Outlier::DetectorHostSink& outlierDetector() const override {
+    HealthCheckHostMonitor& healthChecker() const override {
+      return logical_host_->healthChecker();
+    }
+    Outlier::DetectorHostMonitor& outlierDetector() const override {
       return logical_host_->outlierDetector();
     }
     const HostStats& stats() const override { return logical_host_->stats(); }
     const std::string& hostname() const override { return logical_host_->hostname(); }
     Network::Address::InstanceConstSharedPtr address() const override { return address_; }
-    const std::string& zone() const override { return EMPTY_STRING; }
+    const envoy::api::v2::Locality& locality() const override {
+      return envoy::api::v2::Locality().default_instance();
+    }
 
     Network::Address::InstanceConstSharedPtr address_;
     HostConstSharedPtr logical_host_;

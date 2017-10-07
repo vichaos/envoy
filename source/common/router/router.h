@@ -14,6 +14,7 @@
 #include "envoy/stats/stats_macros.h"
 #include "envoy/upstream/cluster_manager.h"
 
+#include "common/buffer/watermark_buffer.h"
 #include "common/common/logger.h"
 
 namespace Envoy {
@@ -121,16 +122,14 @@ public:
   Http::FilterHeadersStatus decodeHeaders(Http::HeaderMap& headers, bool end_stream) override;
   Http::FilterDataStatus decodeData(Buffer::Instance& data, bool end_stream) override;
   Http::FilterTrailersStatus decodeTrailers(Http::HeaderMap& trailers) override;
-  void setDecoderFilterCallbacks(Http::StreamDecoderFilterCallbacks& callbacks) override {
-    callbacks_ = &callbacks;
-  }
+  void setDecoderFilterCallbacks(Http::StreamDecoderFilterCallbacks& callbacks) override;
 
   // Upstream::LoadBalancerContext
   Optional<uint64_t> hashKey() const override {
     if (route_entry_ && downstream_headers_) {
       auto hash_policy = route_entry_->hashPolicy();
       if (hash_policy) {
-        return hash_policy->generateHash(*downstream_headers_);
+        return hash_policy->generateHash(callbacks_->downstreamAddress(), *downstream_headers_);
       }
     }
     return {};
@@ -139,13 +138,17 @@ public:
     return callbacks_->connection();
   }
 
+protected:
+  RetryStatePtr retry_state_;
+
 private:
   struct UpstreamRequest : public Http::StreamDecoder,
                            public Http::StreamCallbacks,
                            public Http::ConnectionPool::Callbacks {
     UpstreamRequest(Filter& parent, Http::ConnectionPool::Instance& pool)
-        : parent_(parent), conn_pool_(pool), calling_encode_headers_(false),
-          upstream_canary_(false), encode_complete_(false), encode_trailers_(false) {}
+        : parent_(parent), conn_pool_(pool), grpc_rq_success_deferred_(false),
+          calling_encode_headers_(false), upstream_canary_(false), encode_complete_(false),
+          encode_trailers_(false) {}
 
     ~UpstreamRequest();
 
@@ -168,13 +171,14 @@ private:
 
     // Http::StreamCallbacks
     void onResetStream(Http::StreamResetReason reason) override;
-    void onAboveWriteBufferHighWatermark() override {
-      // Have the connection manager disable reads on the downstream stream.
+    void onAboveWriteBufferHighWatermark() override { disableDataFromDownstream(); }
+    void onBelowWriteBufferLowWatermark() override { enableDataFromDownstream(); }
+
+    void disableDataFromDownstream() {
       parent_.cluster_->stats().upstream_flow_control_backed_up_total_.inc();
       parent_.callbacks_->onDecoderFilterAboveWriteBufferHighWatermark();
     }
-    void onBelowWriteBufferLowWatermark() override {
-      // Have the connection manager enable reads on the downstream stream.
+    void enableDataFromDownstream() {
       parent_.cluster_->stats().upstream_flow_control_drained_total_.inc();
       parent_.callbacks_->onDecoderFilterBelowWriteBufferLowWatermark();
     }
@@ -202,11 +206,12 @@ private:
 
     Filter& parent_;
     Http::ConnectionPool::Instance& conn_pool_;
+    bool grpc_rq_success_deferred_;
     Event::TimerPtr per_try_timeout_;
     Http::ConnectionPool::Cancellable* conn_pool_stream_handle_{};
     Http::StreamEncoder* request_encoder_{};
     Optional<Http::StreamResetReason> deferred_reset_reason_;
-    Buffer::InstancePtr buffered_request_body_;
+    Buffer::WatermarkBufferPtr buffered_request_body_;
     Upstream::HostDescriptionConstSharedPtr upstream_host_;
     DownstreamWatermarkManager downstream_watermark_manager_{*this};
 
@@ -223,10 +228,11 @@ private:
   Http::AccessLog::ResponseFlag
   streamResetReasonToResponseFlag(Http::StreamResetReason reset_reason);
 
-  static const std::string& upstreamZone(Upstream::HostDescriptionConstSharedPtr upstream_host);
-  void chargeUpstreamCode(const Http::HeaderMap& response_headers,
-                          Upstream::HostDescriptionConstSharedPtr upstream_host);
-  void chargeUpstreamCode(Http::Code code, Upstream::HostDescriptionConstSharedPtr upstream_host);
+  static const std::string upstreamZone(Upstream::HostDescriptionConstSharedPtr upstream_host);
+  void chargeUpstreamCode(uint64_t response_status_code, const Http::HeaderMap& response_headers,
+                          Upstream::HostDescriptionConstSharedPtr upstream_host, bool dropped);
+  void chargeUpstreamCode(Http::Code code, Upstream::HostDescriptionConstSharedPtr upstream_host,
+                          bool dropped);
   void cleanup();
   virtual RetryStatePtr createRetryState(const RetryPolicy& policy,
                                          Http::HeaderMap& request_headers,
@@ -247,6 +253,10 @@ private:
   void sendNoHealthyUpstreamResponse();
   bool setupRetry(bool end_stream);
   void doRetry();
+  // Called immediately after a non-5xx header is received from upstream, performs stats accounting
+  // and handle difference between gRPC and non-gRPC requests.
+  void handleNon5xxResponseHeaders(const Http::HeaderMap& headers, bool end_stream);
+  void sendLocalReply(Http::Code code, const std::string& body, bool overloaded);
 
   FilterConfig& config_;
   Http::StreamDecoderFilterCallbacks* callbacks_{};
@@ -259,10 +269,11 @@ private:
   FilterUtility::TimeoutData timeout_;
   Http::Code timeout_response_code_ = Http::Code::GatewayTimeout;
   UpstreamRequestPtr upstream_request_;
-  RetryStatePtr retry_state_;
+  bool grpc_request_{};
   Http::HeaderMap* downstream_headers_{};
   Http::HeaderMap* downstream_trailers_{};
   MonotonicTime downstream_request_complete_time_;
+  uint32_t buffer_limit_{0};
   bool stream_destroyed_{};
 
   bool downstream_response_started_ : 1;

@@ -18,8 +18,7 @@ namespace Http {
  */
 // clang-format off
 #define ALL_BUFFER_FILTER_STATS(COUNTER)                                                           \
-  COUNTER(rq_timeout)                                                                              \
-  COUNTER(rq_too_large)
+  COUNTER(rq_timeout)
 // clang-format on
 
 /**
@@ -66,6 +65,7 @@ private:
   BufferFilterConfigConstSharedPtr config_;
   StreamDecoderFilterCallbacks* callbacks_{};
   Event::TimerPtr request_timeout_;
+  bool stream_destroyed_{};
 };
 
 } // Http

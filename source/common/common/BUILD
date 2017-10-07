@@ -52,6 +52,12 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "hash_lib",
+    hdrs = ["hash.h"],
+    external_deps = ["xxhash"],
+)
+
+envoy_cc_library(
     name = "hex_lib",
     srcs = ["hex.cc"],
     hdrs = ["hex.h"],
@@ -70,6 +76,8 @@ envoy_cc_library(
     hdrs = ["logger.h"],
     deps = [
         ":macros",
+        "//include/envoy/access_log:access_log_interface",
+        "//include/envoy/filesystem:filesystem_interface",
         "//include/envoy/thread:thread_interface",
     ],
 )
@@ -123,6 +131,7 @@ envoy_cc_library(
     linkstamp = "version_linkstamp.cc",
     deps = [
         ":version_includes",
+        "//source/common/common:macros",
     ],
 )
 

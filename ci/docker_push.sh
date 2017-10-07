@@ -8,27 +8,37 @@ set -e
 want_push='false'
 for branch in "master"
 do
-   if [ "$TRAVIS_BRANCH" == "$branch" ]
+   if [ "$CIRCLE_BRANCH" == "$branch" ]
    then
        want_push='true'
    fi
 done
-if [ "$TRAVIS_PULL_REQUEST" == "false" ] && [ "$want_push" == "true" ]
+if [ -z "$CIRCLE_PULL_REQUEST" ] && [ -z "$CIRCLE_TAG" ] && [ "$want_push" == "true" ]
 then
-   # this is needed to verify the example images
-   docker build -f ci/Dockerfile-envoy-image -t lyft/envoy:latest .
-   # verify the Alpine build even when we're not pushing it
-   make -C ci/build_alpine_container
+   # TODO(mattklein123): Currently we are doing this push in the context of the release job which
+   # happens inside of our build image. We should switch to using Circle caching so each of these
+   # are discrete jobs that work with the binary. All of these commands run on a remote docker
+   # server also so we have to temporarily install docker here.
+   # https://circleci.com/docs/2.0/building-docker-images/
+   VER="17.03.0-ce"
+   curl -L -o /tmp/docker-"$VER".tgz https://get.docker.com/builds/Linux/x86_64/docker-"$VER".tgz
+   tar -xz -C /tmp -f /tmp/docker-"$VER".tgz
+   mv /tmp/docker/* /usr/bin
 
-   docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASSWORD
+   docker build -f ci/Dockerfile-envoy-image -t lyft/envoy:latest .
+   docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_PASSWORD"
    docker push lyft/envoy:latest
-   docker tag lyft/envoy:latest lyft/envoy:$TRAVIS_COMMIT
-   docker push lyft/envoy:$TRAVIS_COMMIT
-   docker tag lyft/envoy-alpine:latest lyft/envoy-alpine:$TRAVIS_COMMIT
-   docker push lyft/envoy-alpine:$TRAVIS_COMMIT
+   docker tag lyft/envoy:latest lyft/envoy:"$CIRCLE_SHA1"
+   docker push lyft/envoy:"$CIRCLE_SHA1"
+
+   docker build -f ci/Dockerfile-envoy-alpine -t lyft/envoy-alpine:latest .
+   docker tag lyft/envoy-alpine:latest lyft/envoy-alpine:"$CIRCLE_SHA1"
+   docker push lyft/envoy-alpine:"$CIRCLE_SHA1"
    docker push lyft/envoy-alpine:latest
-   docker tag lyft/envoy-alpine-debug:latest lyft/envoy-alpine-debug:$TRAVIS_COMMIT
-   docker push lyft/envoy-alpine-debug:$TRAVIS_COMMIT
+
+   docker build -f ci/Dockerfile-envoy-alpine-debug -t lyft/envoy-alpine-debug:latest .
+   docker tag lyft/envoy-alpine-debug:latest lyft/envoy-alpine-debug:"$CIRCLE_SHA1"
+   docker push lyft/envoy-alpine-debug:"$CIRCLE_SHA1"
    docker push lyft/envoy-alpine-debug:latest
 
    # This script tests the docker examples.

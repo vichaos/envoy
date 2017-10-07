@@ -30,6 +30,8 @@ public:
 class MockConnectionBase {
 public:
   void raiseEvent(Network::ConnectionEvent event);
+  void runHighWatermarkCallbacks();
+  void runLowWatermarkCallbacks();
 
   static uint64_t next_id_;
 
@@ -58,10 +60,11 @@ public:
   MOCK_CONST_METHOD0(nextProtocol, std::string());
   MOCK_METHOD1(noDelay, void(bool enable));
   MOCK_METHOD1(readDisable, void(bool disable));
+  MOCK_METHOD1(detectEarlyCloseWhenReadDisabled, void(bool));
   MOCK_CONST_METHOD0(readEnabled, bool());
   MOCK_CONST_METHOD0(remoteAddress, const Address::Instance&());
   MOCK_CONST_METHOD0(localAddress, const Address::Instance&());
-  MOCK_METHOD1(setBufferStats, void(const BufferStats& stats));
+  MOCK_METHOD1(setConnectionStats, void(const ConnectionStats& stats));
   MOCK_METHOD0(ssl, Ssl::Connection*());
   MOCK_CONST_METHOD0(ssl, const Ssl::Connection*());
   MOCK_CONST_METHOD0(state, State());
@@ -93,10 +96,11 @@ public:
   MOCK_CONST_METHOD0(nextProtocol, std::string());
   MOCK_METHOD1(noDelay, void(bool enable));
   MOCK_METHOD1(readDisable, void(bool disable));
+  MOCK_METHOD1(detectEarlyCloseWhenReadDisabled, void(bool));
   MOCK_CONST_METHOD0(readEnabled, bool());
   MOCK_CONST_METHOD0(remoteAddress, const Address::Instance&());
   MOCK_CONST_METHOD0(localAddress, const Address::Instance&());
-  MOCK_METHOD1(setBufferStats, void(const BufferStats& stats));
+  MOCK_METHOD1(setConnectionStats, void(const ConnectionStats& stats));
   MOCK_METHOD0(ssl, Ssl::Connection*());
   MOCK_CONST_METHOD0(ssl, const Ssl::Connection*());
   MOCK_CONST_METHOD0(state, State());

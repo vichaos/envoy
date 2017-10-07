@@ -15,9 +15,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
+using testing::Property;
 using testing::_;
 
+namespace Envoy {
 namespace Http {
 
 class CodeUtilityTest : public testing::Test {
@@ -27,11 +28,9 @@ public:
                    const std::string& request_vcluster_name = EMPTY_STRING,
                    const std::string& from_az = EMPTY_STRING,
                    const std::string& to_az = EMPTY_STRING) {
-    TestHeaderMapImpl headers{{":status", std::to_string(code)}};
-
     CodeUtility::ResponseStatInfo info{
-        global_store_,      cluster_scope_,        "prefix.", headers, internal_request,
-        request_vhost_name, request_vcluster_name, from_az,   to_az,   canary};
+        global_store_,      cluster_scope_,        "prefix.", code,  internal_request,
+        request_vhost_name, request_vcluster_name, from_az,   to_az, canary};
 
     CodeUtility::chargeResponseStat(info);
   }
@@ -92,7 +91,7 @@ TEST_F(CodeUtilityTest, Canary) {
 }
 
 TEST_F(CodeUtilityTest, All) {
-  std::vector<std::pair<Code, std::string>> testSet = {
+  const std::vector<std::pair<Code, std::string>> test_set = {
       std::make_pair(Code::Continue, "Continue"),
       std::make_pair(Code::OK, "OK"),
       std::make_pair(Code::Created, "Created"),
@@ -151,8 +150,8 @@ TEST_F(CodeUtilityTest, All) {
       std::make_pair(Code::NetworkAuthenticationRequired, "Network Authentication Required"),
       std::make_pair(static_cast<Code>(600), "Unknown")};
 
-  for (const auto& testCase : testSet) {
-    EXPECT_EQ(testCase.second, CodeUtility::toString(testCase.first));
+  for (const auto& test_case : test_set) {
+    EXPECT_EQ(test_case.second, CodeUtility::toString(test_case.first));
   }
 
   EXPECT_EQ(std::string("Unknown"), CodeUtility::toString(static_cast<Code>(600)));
@@ -183,17 +182,31 @@ TEST(CodeUtilityResponseTimingTest, All) {
       true,         true,          "vhost_name", "req_vcluster_name",
       "from_az",    "to_az"};
 
+  EXPECT_CALL(cluster_scope, histogram("prefix.upstream_rq_time"));
+  EXPECT_CALL(cluster_scope, deliverHistogramToSinks(
+                                 Property(&Stats::Metric::name, "prefix.upstream_rq_time"), 5));
+
+  EXPECT_CALL(cluster_scope, histogram("prefix.canary.upstream_rq_time"));
+  EXPECT_CALL(
+      cluster_scope,
+      deliverHistogramToSinks(Property(&Stats::Metric::name, "prefix.canary.upstream_rq_time"), 5));
+
+  EXPECT_CALL(cluster_scope, histogram("prefix.internal.upstream_rq_time"));
   EXPECT_CALL(cluster_scope,
-              deliverTimingToSinks("prefix.upstream_rq_time", std::chrono::milliseconds(5)));
-  EXPECT_CALL(cluster_scope,
-              deliverTimingToSinks("prefix.canary.upstream_rq_time", std::chrono::milliseconds(5)));
-  EXPECT_CALL(cluster_scope, deliverTimingToSinks("prefix.internal.upstream_rq_time",
-                                                  std::chrono::milliseconds(5)));
+              deliverHistogramToSinks(
+                  Property(&Stats::Metric::name, "prefix.internal.upstream_rq_time"), 5));
   EXPECT_CALL(global_store,
-              deliverTimingToSinks("vhost.vhost_name.vcluster.req_vcluster_name.upstream_rq_time",
-                                   std::chrono::milliseconds(5)));
-  EXPECT_CALL(cluster_scope, deliverTimingToSinks("prefix.zone.from_az.to_az.upstream_rq_time",
-                                                  std::chrono::milliseconds(5)));
+              histogram("vhost.vhost_name.vcluster.req_vcluster_name.upstream_rq_time"));
+  EXPECT_CALL(global_store,
+              deliverHistogramToSinks(
+                  Property(&Stats::Metric::name,
+                           "vhost.vhost_name.vcluster.req_vcluster_name.upstream_rq_time"),
+                  5));
+
+  EXPECT_CALL(cluster_scope, histogram("prefix.zone.from_az.to_az.upstream_rq_time"));
+  EXPECT_CALL(cluster_scope,
+              deliverHistogramToSinks(
+                  Property(&Stats::Metric::name, "prefix.zone.from_az.to_az.upstream_rq_time"), 5));
   CodeUtility::chargeResponseTiming(info);
 }
 

@@ -27,7 +27,7 @@
 #include "common/upstream/original_dst_cluster.h"
 #include "common/upstream/ring_hash_lb.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Upstream {
@@ -156,57 +156,34 @@ void ClusterManagerInitHelper::setInitializedCb(std::function<void()> callback) 
   }
 }
 
-void ClusterManagerImpl::initializeClustersFromV1Json(const Json::Object& config) {
-  envoy::api::v2::ConfigSource cds_config;
-  if (config.hasObject("cds")) {
-    envoy::api::v2::Cluster cds_cluster;
-    Config::CdsJson::translateCluster(*config.getObject("cds")->getObject("cluster"), sds_config_,
-                                      cds_cluster);
-    loadCluster(cds_cluster, false);
-    Config::Utility::translateCdsConfig(*config.getObject("cds"), cds_config);
-    // We can now potentially create the CDS API once the backing cluster exists.
-    cds_api_ = factory_.createCds(cds_config, sds_config_, *this);
-    init_helper_.setCds(cds_api_.get());
-  } else {
-    init_helper_.setCds(nullptr);
-  }
-
-  for (const Json::ObjectSharedPtr& cluster_config : config.getObjectArray("clusters")) {
-    envoy::api::v2::Cluster cluster;
-    Config::CdsJson::translateCluster(*cluster_config, sds_config_, cluster);
-    loadCluster(cluster, false);
-  }
-}
-
-void ClusterManagerImpl::initializeClustersFromV2Proto(const envoy::api::v2::Bootstrap& bootstrap) {
-  for (const auto& cluster : bootstrap.static_resources().clusters()) {
-    loadCluster(cluster, false);
-  }
-
-  // We can now potentially create the CDS API once the backing cluster exists.
-  if (bootstrap.dynamic_resources().has_cds_config()) {
-    cds_api_ = factory_.createCds(bootstrap.dynamic_resources().cds_config(), sds_config_, *this);
-    init_helper_.setCds(cds_api_.get());
-  } else {
-    init_helper_.setCds(nullptr);
-  }
-}
-
-ClusterManagerImpl::ClusterManagerImpl(const Json::Object& config,
-                                       const envoy::api::v2::Bootstrap& bootstrap,
+ClusterManagerImpl::ClusterManagerImpl(const envoy::api::v2::Bootstrap& bootstrap,
                                        ClusterManagerFactory& factory, Stats::Store& stats,
                                        ThreadLocal::SlotAllocator& tls, Runtime::Loader& runtime,
                                        Runtime::RandomGenerator& random,
                                        const LocalInfo::LocalInfo& local_info,
-                                       AccessLog::AccessLogManager& log_manager)
+                                       AccessLog::AccessLogManager& log_manager,
+                                       Event::Dispatcher& primary_dispatcher)
     : factory_(factory), runtime_(runtime), stats_(stats), tls_(tls.allocateSlot()),
       random_(random), local_info_(local_info), cm_stats_(generateStats(stats)) {
+  const auto& ads_config = bootstrap.dynamic_resources().ads_config();
+  if (ads_config.cluster_name().empty()) {
+    ENVOY_LOG(debug, "No ADS clusters defined, ADS will not be initialized.");
+    ads_mux_.reset(new Config::NullGrpcMuxImpl());
+  } else {
+    if (ads_config.cluster_name().size() != 1) {
+      // TODO(htuch): Add support for multiple clusters, #1170.
+      throw EnvoyException(
+          "envoy::api::v2::ApiConfigSource must have a singleton cluster name specified");
+    }
+    ads_mux_.reset(new Config::GrpcMuxImpl(
+        bootstrap.node(), *this, ads_config.cluster_name()[0], primary_dispatcher,
+        *Protobuf::DescriptorPool::generated_pool()->FindMethodByName(
+            "envoy.api.v2.AggregatedDiscoveryService.StreamAggregatedResources")));
+  }
 
-  config.validateSchema(Json::Schema::CLUSTER_MANAGER_SCHEMA);
-
-  if (config.hasObject("outlier_detection")) {
-    std::string event_log_file_path =
-        config.getObject("outlier_detection")->getString("event_log_path", "");
+  const auto& cm_config = bootstrap.cluster_manager();
+  if (cm_config.has_outlier_detection()) {
+    const std::string event_log_file_path = cm_config.outlier_detection().event_log_path();
     if (!event_log_file_path.empty()) {
       outlier_event_logger_.reset(new Outlier::EventLoggerImpl(log_manager, event_log_file_path,
                                                                ProdSystemTimeSource::instance_,
@@ -214,17 +191,8 @@ ClusterManagerImpl::ClusterManagerImpl(const Json::Object& config,
     }
   }
 
-  if (config.hasObject("sds")) {
-    envoy::api::v2::Cluster sds_cluster;
-    Config::CdsJson::translateCluster(*config.getObject("sds")->getObject("cluster"), sds_config_,
-                                      sds_cluster);
-    loadCluster(sds_cluster, false);
-
-    SdsConfig sds_config{
-        config.getObject("sds")->getObject("cluster")->getString("name"),
-        std::chrono::milliseconds(config.getObject("sds")->getInteger("refresh_delay_ms"))};
-
-    sds_config_.value(sds_config);
+  if (bootstrap.dynamic_resources().deprecated_v1().has_sds_config()) {
+    eds_config_.value(bootstrap.dynamic_resources().deprecated_v1().sds_config());
   }
 
   if (bootstrap.cluster_manager().upstream_bind_config().has_source_address()) {
@@ -232,19 +200,21 @@ ClusterManagerImpl::ClusterManagerImpl(const Json::Object& config,
         bootstrap.cluster_manager().upstream_bind_config().source_address());
   }
 
-  if (bootstrap.dynamic_resources().has_cds_config() ||
-      !bootstrap.static_resources().clusters().empty()) {
-    initializeClustersFromV2Proto(bootstrap);
+  for (const auto& cluster : bootstrap.static_resources().clusters()) {
+    loadCluster(cluster, false);
+  }
+
+  // We can now potentially create the CDS API once the backing cluster exists.
+  if (bootstrap.dynamic_resources().has_cds_config()) {
+    cds_api_ = factory_.createCds(bootstrap.dynamic_resources().cds_config(), eds_config_, *this);
+    init_helper_.setCds(cds_api_.get());
   } else {
-    // TODO(htuch): Make this similar to the v1 -> v2 translation elsewhere,
-    // convert the JSON to envoy::api::v2::Bootstrap and use initializeClustersFromV2Proto()
-    // instead.
-    initializeClustersFromV1Json(config);
+    init_helper_.setCds(nullptr);
   }
 
   Optional<std::string> local_cluster_name;
-  if (config.hasObject("local_cluster_name")) {
-    local_cluster_name.value(config.getString("local_cluster_name"));
+  if (!cm_config.local_cluster_name().empty()) {
+    local_cluster_name.value(cm_config.local_cluster_name());
     if (primary_clusters_.find(local_cluster_name.value()) == primary_clusters_.end()) {
       throw EnvoyException(
           fmt::format("local cluster '{}' must be defined", local_cluster_name.value()));
@@ -266,6 +236,7 @@ ClusterManagerImpl::ClusterManagerImpl(const Json::Object& config,
   }
 
   init_helper_.onStaticLoadComplete();
+  ads_mux_->start();
 }
 
 ClusterManagerStats ClusterManagerImpl::generateStats(Stats::Scope& scope) {
@@ -408,16 +379,16 @@ void ClusterManagerImpl::postThreadLocalClusterUpdate(
   HostVectorConstSharedPtr hosts_copy(new std::vector<HostSharedPtr>(primary_cluster.hosts()));
   HostVectorConstSharedPtr healthy_hosts_copy(
       new std::vector<HostSharedPtr>(primary_cluster.healthyHosts()));
-  HostListsConstSharedPtr hosts_per_zone_copy(
-      new std::vector<std::vector<HostSharedPtr>>(primary_cluster.hostsPerZone()));
-  HostListsConstSharedPtr healthy_hosts_per_zone_copy(
-      new std::vector<std::vector<HostSharedPtr>>(primary_cluster.healthyHostsPerZone()));
+  HostListsConstSharedPtr hosts_per_locality_copy(
+      new std::vector<std::vector<HostSharedPtr>>(primary_cluster.hostsPerLocality()));
+  HostListsConstSharedPtr healthy_hosts_per_locality_copy(
+      new std::vector<std::vector<HostSharedPtr>>(primary_cluster.healthyHostsPerLocality()));
 
-  tls_->runOnAllThreads([this, name, hosts_copy, healthy_hosts_copy, hosts_per_zone_copy,
-                         healthy_hosts_per_zone_copy, hosts_added, hosts_removed]() -> void {
+  tls_->runOnAllThreads([this, name, hosts_copy, healthy_hosts_copy, hosts_per_locality_copy,
+                         healthy_hosts_per_locality_copy, hosts_added, hosts_removed]() -> void {
     ThreadLocalClusterManagerImpl::updateClusterMembership(
-        name, hosts_copy, healthy_hosts_copy, hosts_per_zone_copy, healthy_hosts_per_zone_copy,
-        hosts_added, hosts_removed, *tls_);
+        name, hosts_copy, healthy_hosts_copy, hosts_per_locality_copy,
+        healthy_hosts_per_locality_copy, hosts_added, hosts_removed, *tls_);
   });
 }
 
@@ -529,12 +500,19 @@ void ClusterManagerImpl::ThreadLocalClusterManagerImpl::drainConnPools(
         host_http_conn_pool_map_.erase(old_host);
       }
     });
+
+    // The above addDrainedCallback() drain completion callback might execute immediately. This can
+    // then effectively nuke 'container', which means we can't continue to loop on its contents
+    // (we're done here).
+    if (host_http_conn_pool_map_.count(old_host) == 0) {
+      break;
+    }
   }
 }
 
 void ClusterManagerImpl::ThreadLocalClusterManagerImpl::updateClusterMembership(
     const std::string& name, HostVectorConstSharedPtr hosts, HostVectorConstSharedPtr healthy_hosts,
-    HostListsConstSharedPtr hosts_per_zone, HostListsConstSharedPtr healthy_hosts_per_zone,
+    HostListsConstSharedPtr hosts_per_locality, HostListsConstSharedPtr healthy_hosts_per_locality,
     const std::vector<HostSharedPtr>& hosts_added, const std::vector<HostSharedPtr>& hosts_removed,
     ThreadLocal::Slot& tls) {
 
@@ -542,7 +520,8 @@ void ClusterManagerImpl::ThreadLocalClusterManagerImpl::updateClusterMembership(
 
   ASSERT(config.thread_local_clusters_.find(name) != config.thread_local_clusters_.end());
   config.thread_local_clusters_[name]->host_set_.updateHosts(
-      hosts, healthy_hosts, hosts_per_zone, healthy_hosts_per_zone, hosts_added, hosts_removed);
+      std::move(hosts), std::move(healthy_hosts), std::move(hosts_per_locality),
+      std::move(healthy_hosts_per_locality), hosts_added, hosts_removed);
 }
 
 ClusterManagerImpl::ThreadLocalClusterManagerImpl::ClusterEntry::ClusterEntry(
@@ -619,12 +598,12 @@ ClusterManagerImpl::ThreadLocalClusterManagerImpl::ClusterEntry::connPool(
   return container.pools_[enumToInt(priority)].get();
 }
 
-ClusterManagerPtr ProdClusterManagerFactory::clusterManagerFromJson(
-    const Json::Object& config, const envoy::api::v2::Bootstrap& bootstrap, Stats::Store& stats,
-    ThreadLocal::Instance& tls, Runtime::Loader& runtime, Runtime::RandomGenerator& random,
+ClusterManagerPtr ProdClusterManagerFactory::clusterManagerFromProto(
+    const envoy::api::v2::Bootstrap& bootstrap, Stats::Store& stats, ThreadLocal::Instance& tls,
+    Runtime::Loader& runtime, Runtime::RandomGenerator& random,
     const LocalInfo::LocalInfo& local_info, AccessLog::AccessLogManager& log_manager) {
-  return ClusterManagerPtr{new ClusterManagerImpl(config, bootstrap, *this, stats, tls, runtime,
-                                                  random, local_info, log_manager)};
+  return ClusterManagerPtr{new ClusterManagerImpl(bootstrap, *this, stats, tls, runtime, random,
+                                                  local_info, log_manager, primary_dispatcher_)};
 }
 
 Http::ConnectionPool::InstancePtr
@@ -648,10 +627,11 @@ ClusterSharedPtr ProdClusterManagerFactory::clusterFromProto(
                                  outlier_event_logger, added_via_api);
 }
 
-CdsApiPtr ProdClusterManagerFactory::createCds(const envoy::api::v2::ConfigSource& cds_config,
-                                               const Optional<SdsConfig>& sds_config,
-                                               ClusterManager& cm) {
-  return CdsApiImpl::create(cds_config, sds_config, cm, primary_dispatcher_, random_, local_info_,
+CdsApiPtr
+ProdClusterManagerFactory::createCds(const envoy::api::v2::ConfigSource& cds_config,
+                                     const Optional<envoy::api::v2::ConfigSource>& eds_config,
+                                     ClusterManager& cm) {
+  return CdsApiImpl::create(cds_config, eds_config, cm, primary_dispatcher_, random_, local_info_,
                             stats_);
 }
 

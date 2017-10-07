@@ -209,7 +209,8 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, BadFilterName) {
   )EOF";
 
   EXPECT_THROW_WITH_MESSAGE(manager_->addOrUpdateListener(parseListenerFromJson(json)),
-                            EnvoyException, "unable to create filter factory for 'invalid'");
+                            EnvoyException,
+                            "Didn't find a registered implementation for name: 'invalid'");
 }
 
 class TestStatsConfigFactory : public Configuration::NamedNetworkFilterConfigFactory {
@@ -221,9 +222,6 @@ public:
     return [](Network::FilterManager&) -> void {};
   }
   std::string name() override { return "stats_test"; }
-  Configuration::NetworkFilterType type() override {
-    return Configuration::NetworkFilterType::Read;
-  }
 };
 
 TEST_F(ListenerManagerImplWithRealFiltersTest, StatsScopeTest) {
@@ -648,6 +646,21 @@ TEST_F(ListenerManagerImplTest, AddListenerFailure) {
   worker_->callRemovalCompletion();
 
   EXPECT_EQ(1UL, server_.stats_store_.counter("listener_manager.listener_create_failure").value());
+}
+
+TEST_F(ListenerManagerImplTest, StatsNameValidCharacterTest) {
+  const std::string json = R"EOF(
+  {
+    "address": "tcp://[::1]:10000",
+    "filters": [],
+    "bind_to_port": false
+  }
+  )EOF";
+
+  manager_->addOrUpdateListener(parseListenerFromJson(json));
+  manager_->listeners().front().get().listenerScope().counter("foo").inc();
+
+  EXPECT_EQ(1UL, server_.stats_store_.counter("listener.[__1]_10000.foo").value());
 }
 
 TEST_F(ListenerManagerImplTest, DuplicateAddressDontBind) {

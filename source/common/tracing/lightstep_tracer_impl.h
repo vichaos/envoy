@@ -33,9 +33,10 @@ public:
 
   // Tracing::Span
   void finishSpan(SpanFinalizer& finalizer) override;
+  void setOperation(const std::string& operation) override;
   void setTag(const std::string& name, const std::string& value) override;
   void injectContext(Http::HeaderMap& request_headers) override;
-  SpanPtr spawnChild(const std::string& name, SystemTime start_time) override;
+  SpanPtr spawnChild(const Config& config, const std::string& name, SystemTime start_time) override;
 
   lightstep::SpanContext context() { return span_.context(); }
 
@@ -59,8 +60,8 @@ public:
                   std::unique_ptr<lightstep::TracerOptions> options);
 
   // Tracer::TracingDriver
-  SpanPtr startSpan(Http::HeaderMap& request_headers, const std::string& operation_name,
-                    SystemTime start_time) override;
+  SpanPtr startSpan(const Config& config, Http::HeaderMap& request_headers,
+                    const std::string& operation_name, SystemTime start_time) override;
 
   Upstream::ClusterManager& clusterManager() { return cm_; }
   Upstream::ClusterInfoConstSharedPtr cluster() { return cluster_; }

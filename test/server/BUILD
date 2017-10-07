@@ -5,6 +5,7 @@ load(
     "envoy_cc_test",
     "envoy_cc_test_library",
     "envoy_package",
+    "envoy_select_hot_restart",
 )
 
 envoy_package()
@@ -20,9 +21,11 @@ envoy_cc_test(
     name = "configuration_impl_test",
     srcs = ["configuration_impl_test.cc"],
     deps = [
+        "//source/common/config:well_known_names",
         "//source/common/event:dispatcher_lib",
         "//source/common/upstream:cluster_manager_lib",
         "//source/server:configuration_lib",
+        "//source/server/config/stats:statsd_lib",
         "//test/mocks:common_lib",
         "//test/mocks/network:network_mocks",
         "//test/mocks/server:server_mocks",
@@ -48,6 +51,15 @@ envoy_cc_test(
     srcs = ["drain_manager_impl_test.cc"],
     deps = [
         "//source/server:drain_manager_lib",
+        "//test/mocks/server:server_mocks",
+    ],
+)
+
+envoy_cc_test(
+    name = "hot_restart_impl_test",
+    srcs = envoy_select_hot_restart(["hot_restart_impl_test.cc"]),
+    deps = [
+        "//source/server:hot_restart_lib",
         "//test/mocks/server:server_mocks",
     ],
 )
@@ -112,14 +124,14 @@ envoy_cc_test(
     name = "server_test",
     srcs = ["server_test.cc"],
     data = [
-        ":empty_bootstrap.json",
-        ":node_bootstrap.json",
+        ":node_bootstrap.yaml",
         "//test/config/integration:server.json",
         "//test/config/integration:server_config_files",
     ],
     deps = [
         "//source/common/common:version_lib",
         "//source/server:server_lib",
+        "//source/server/config/stats:statsd_lib",
         "//test/integration:integration_lib",
         "//test/mocks/server:server_mocks",
         "//test/mocks/stats:stats_mocks",

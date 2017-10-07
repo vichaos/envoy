@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/buffer/buffer_impl.h"
+#include "common/common/assert.h"
 #include "common/dynamo/dynamo_request_parser.h"
 #include "common/dynamo/dynamo_utility.h"
 #include "common/http/codes.h"
@@ -13,7 +14,7 @@
 #include "common/http/utility.h"
 #include "common/json/json_loader.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Dynamo {
@@ -35,6 +36,7 @@ Http::FilterDataStatus DynamoFilter::decodeData(Buffer::Instance& data, bool end
   if (end_stream) {
     return Http::FilterDataStatus::Continue;
   } else {
+    // Buffer until the complete request has been processed.
     return Http::FilterDataStatus::StopIterationAndBuffer;
   }
 }
@@ -62,10 +64,7 @@ void DynamoFilter::onDecodeComplete(const Buffer::Instance& data) {
 }
 
 void DynamoFilter::onEncodeComplete(const Buffer::Instance& data) {
-  if (!response_headers_) {
-    return;
-  }
-
+  ASSERT(enabled_);
   uint64_t status = Http::Utility::getResponseStatus(*response_headers_);
   chargeBasicStats(status);
 
@@ -112,6 +111,7 @@ Http::FilterDataStatus DynamoFilter::encodeData(Buffer::Instance& data, bool end
   if (end_stream) {
     return Http::FilterDataStatus::Continue;
   } else {
+    // Buffer until the complete response has been processed.
     return Http::FilterDataStatus::StopIterationAndBuffer;
   }
 }
@@ -181,14 +181,16 @@ void DynamoFilter::chargeStatsPerEntity(const std::string& entity, const std::st
                            std::to_string(status)))
       .inc();
 
-  scope_.deliverTimingToSinks(
-      fmt::format("{}{}.{}.upstream_rq_time", stat_prefix_, entity_type, entity), latency);
-  scope_.deliverTimingToSinks(
-      fmt::format("{}{}.{}.upstream_rq_time_{}", stat_prefix_, entity_type, entity, group_string),
-      latency);
-  scope_.deliverTimingToSinks(fmt::format("{}{}.{}.upstream_rq_time_{}", stat_prefix_, entity_type,
-                                          entity, std::to_string(status)),
-                              latency);
+  scope_.histogram(fmt::format("{}{}.{}.upstream_rq_time", stat_prefix_, entity_type, entity))
+      .recordValue(latency.count());
+  scope_
+      .histogram(fmt::format("{}{}.{}.upstream_rq_time_{}", stat_prefix_, entity_type, entity,
+                             group_string))
+      .recordValue(latency.count());
+  scope_
+      .histogram(fmt::format("{}{}.{}.upstream_rq_time_{}", stat_prefix_, entity_type, entity,
+                             std::to_string(status)))
+      .recordValue(latency.count());
 }
 
 void DynamoFilter::chargeUnProcessedKeysStats(const Json::Object& json_body) {

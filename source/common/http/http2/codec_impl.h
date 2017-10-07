@@ -157,6 +157,7 @@ protected:
     void removeCallbacks(StreamCallbacks& callbacks) override { removeCallbacks_(callbacks); }
     void resetStream(StreamResetReason reason) override;
     virtual void readDisable(bool disable) override;
+    virtual uint32_t bufferLimit() override { return pending_recv_data_.highWatermark(); }
 
     void setWriteBufferWatermarks(uint32_t low_watermark, uint32_t high_watermark) {
       pending_recv_data_.setWatermarks(low_watermark, high_watermark);
@@ -186,11 +187,9 @@ protected:
     uint32_t unconsumed_bytes_{0};
     uint32_t read_disable_count_{0};
     Buffer::WatermarkBuffer pending_recv_data_{
-        Buffer::InstancePtr{new Buffer::OwnedImpl},
         [this]() -> void { this->pendingRecvBufferLowWatermark(); },
         [this]() -> void { this->pendingRecvBufferHighWatermark(); }};
     Buffer::WatermarkBuffer pending_send_data_{
-        Buffer::InstancePtr{new Buffer::OwnedImpl},
         [this]() -> void { this->pendingSendBufferLowWatermark(); },
         [this]() -> void { this->pendingSendBufferHighWatermark(); }};
     HeaderMapPtr pending_trailers_;
@@ -232,7 +231,7 @@ protected:
   StreamImpl* getStream(int32_t stream_id);
   int saveHeader(const nghttp2_frame* frame, HeaderString&& name, HeaderString&& value);
   void sendPendingFrames();
-  void sendSettings(const Http2Settings& http2_settings);
+  void sendSettings(const Http2Settings& http2_settings, bool disable_push);
 
   static Http2Callbacks http2_callbacks_;
   static Http2Options http2_options_;

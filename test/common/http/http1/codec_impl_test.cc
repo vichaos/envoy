@@ -16,7 +16,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::InSequence;
 using testing::Invoke;
 using testing::NiceMock;
@@ -24,6 +23,7 @@ using testing::Return;
 using testing::ReturnRef;
 using testing::_;
 
+namespace Envoy {
 namespace Http {
 namespace Http1 {
 
@@ -726,6 +726,31 @@ TEST_F(Http1ClientConnectionImplTest, WatermarkTest) {
   EXPECT_CALL(stream_callbacks, onBelowWriteBufferLowWatermark());
   static_cast<ClientConnection*>(codec_.get())
       ->onUnderlyingConnectionBelowWriteBufferLowWatermark();
+}
+
+// For issue #1421 regression test that Envoy's HTTP parser applies header limits early.
+TEST_F(Http1ServerConnectionImplTest, TestCodecHeaderLimits) {
+  initialize();
+
+  std::string exception_reason;
+  NiceMock<Http::MockStreamDecoder> decoder;
+  Http::StreamEncoder* response_encoder = nullptr;
+  EXPECT_CALL(callbacks_, newStream(_))
+      .WillOnce(Invoke([&](Http::StreamEncoder& encoder) -> Http::StreamDecoder& {
+        response_encoder = &encoder;
+        return decoder;
+      }));
+
+  Buffer::OwnedImpl buffer("GET / HTTP/1.1\r\n");
+  codec_->dispatch(buffer);
+  std::string long_string = "foo: " + std::string(1024, 'q') + "\r\n";
+  for (int i = 0; i < 79; ++i) {
+    buffer = Buffer::OwnedImpl(long_string);
+    codec_->dispatch(buffer);
+  }
+  buffer = Buffer::OwnedImpl(long_string);
+  EXPECT_THROW_WITH_MESSAGE(codec_->dispatch(buffer), EnvoyException,
+                            "http/1.1 protocol error: HPE_HEADER_OVERFLOW");
 }
 
 } // namespace Http1

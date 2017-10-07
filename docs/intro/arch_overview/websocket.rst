@@ -4,12 +4,14 @@ WebSocket support
 =================
 
 Envoy supports upgrading a HTTP/1.1 connection to a WebSocket connection.
-Connection upgrade will be considered if and only if the downstream client
+Connection upgrade will be allowed only if the downstream client
 sends the correct upgrade headers and the matching HTTP route is explicitly
-configured to use websockets
+configured to use WebSockets
 (:ref:`use_websocket <config_http_conn_man_route_table_route_use_websocket>`).
+If a request arrives at a WebSocket enabled route without the requisite
+upgrade headers, it will be treated as any regular HTTP/1.1 request.
 
-Since Envoy treats WebSocket connections as plain TCP connections, it 
+Since Envoy treats WebSocket connections as plain TCP connections, it
 supports all drafts of the WebSocket protocol, independent of their wire
 format. Certain HTTP request level features such as redirects, timeouts,
 retries, rate limits and shadowing are not supported for WebSocket routes.
@@ -19,8 +21,8 @@ shifting and splitting are supported.
 Connection semantics
 --------------------
 
-Eventhough WebSocket upgrades occur over HTTP/1.1 connections, WebSockets
-proxying works similar to plain TCP proxy, i.e., Envoy does not interpret
+Even though WebSocket upgrades occur over HTTP/1.1 connections, WebSockets
+proxying works similarly to plain TCP proxy, i.e., Envoy does not interpret
 the websocket frames. The downstream client and/or the upstream server are
 responsible for properly terminating the WebSocket connection
 (e.g., by sending `close frames <https://tools.ietf.org/html/rfc6455#section-5.5.1>`_)

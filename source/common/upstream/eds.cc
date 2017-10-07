@@ -5,9 +5,12 @@
 #include "common/config/metadata.h"
 #include "common/config/subscription_factory.h"
 #include "common/config/utility.h"
+#include "common/config/well_known_names.h"
 #include "common/network/address_impl.h"
 #include "common/network/utility.h"
 #include "common/upstream/sds_subscription.h"
+
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Upstream {
@@ -39,6 +42,12 @@ void EdsClusterImpl::initialize() { subscription_->start({cluster_name_}, *this)
 
 void EdsClusterImpl::onConfigUpdate(const ResourceVector& resources) {
   std::vector<HostSharedPtr> new_hosts;
+  if (resources.empty()) {
+    ENVOY_LOG(debug, "Missing ClusterLoadAssignment for {} in onConfigUpdate()", cluster_name_);
+    info_->stats().update_empty_.inc();
+    runInitializeCallbackIfAny();
+    return;
+  }
   if (resources.size() != 1) {
     throw EnvoyException(fmt::format("Unexpected EDS resource length: {}", resources.size()));
   }
@@ -49,16 +58,11 @@ void EdsClusterImpl::onConfigUpdate(const ResourceVector& resources) {
                                      cluster_load_assignment.cluster_name()));
   }
   for (const auto& locality_lb_endpoint : cluster_load_assignment.endpoints()) {
-    const std::string& zone = locality_lb_endpoint.locality().zone();
-
     for (const auto& lb_endpoint : locality_lb_endpoint.lb_endpoints()) {
-      const bool canary = Config::Metadata::metadataValue(lb_endpoint.metadata(),
-                                                          Config::MetadataFilters::get().ENVOY_LB,
-                                                          Config::MetadataEnvoyLbKeys::get().CANARY)
-                              .bool_value();
       new_hosts.emplace_back(new HostImpl(
-          info_, "", Network::Utility::fromProtoAddress(lb_endpoint.endpoint().address()), canary,
-          lb_endpoint.load_balancing_weight().value(), zone));
+          info_, "", Network::Utility::fromProtoAddress(lb_endpoint.endpoint().address()),
+          lb_endpoint.metadata(), lb_endpoint.load_balancing_weight().value(),
+          locality_lb_endpoint.locality()));
     }
   }
 
@@ -68,30 +72,31 @@ void EdsClusterImpl::onConfigUpdate(const ResourceVector& resources) {
   if (updateDynamicHostList(new_hosts, *current_hosts_copy, hosts_added, hosts_removed,
                             health_checker_ != nullptr)) {
     ENVOY_LOG(debug, "EDS hosts changed for cluster: {} ({})", info_->name(), hosts().size());
-    HostListsSharedPtr per_zone(new std::vector<std::vector<HostSharedPtr>>());
+    HostListsSharedPtr per_locality(new std::vector<std::vector<HostSharedPtr>>());
 
-    // If local zone name is not defined then skip populating per zone hosts.
-    if (!local_info_.zoneName().empty()) {
-      std::map<std::string, std::vector<HostSharedPtr>> hosts_per_zone;
+    // If local locality is not defined then skip populating per locality hosts.
+    const Locality local_locality(local_info_.node().locality());
+    if (!local_locality.empty()) {
+      std::map<Locality, std::vector<HostSharedPtr>> hosts_per_locality;
 
       for (const HostSharedPtr& host : *current_hosts_copy) {
-        hosts_per_zone[host->zone()].push_back(host);
+        hosts_per_locality[Locality(host->locality())].push_back(host);
       }
 
-      // Populate per_zone hosts only if upstream cluster has hosts in the same zone.
-      if (hosts_per_zone.find(local_info_.zoneName()) != hosts_per_zone.end()) {
-        per_zone->push_back(hosts_per_zone[local_info_.zoneName()]);
+      // Populate per_locality hosts only if upstream cluster has hosts in the same locality.
+      if (hosts_per_locality.find(local_locality) != hosts_per_locality.end()) {
+        per_locality->push_back(hosts_per_locality[local_locality]);
 
-        for (auto& entry : hosts_per_zone) {
-          if (local_info_.zoneName() != entry.first) {
-            per_zone->push_back(entry.second);
+        for (auto& entry : hosts_per_locality) {
+          if (local_locality != entry.first) {
+            per_locality->push_back(entry.second);
           }
         }
       }
     }
 
-    updateHosts(current_hosts_copy, createHealthyHostList(*current_hosts_copy), per_zone,
-                createHealthyHostLists(*per_zone), hosts_added, hosts_removed);
+    updateHosts(current_hosts_copy, createHealthyHostList(*current_hosts_copy), per_locality,
+                createHealthyHostLists(*per_locality), hosts_added, hosts_removed);
 
     if (initialize_callback_ && health_checker_ && pending_health_checks_ == 0) {
       pending_health_checks_ = hosts().size();

@@ -1,9 +1,7 @@
 #include "server/hot_restart_impl.h"
 
 #include <signal.h>
-#include <sys/mman.h>
 #include <sys/prctl.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
@@ -18,52 +16,64 @@
 #include "common/common/utility.h"
 #include "common/network/utility.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Server {
 
 // Increment this whenever there is a shared memory / RPC change that will prevent a hot restart
 // from working. Operations code can then cope with this and do a full restart.
-const uint64_t SharedMemory::VERSION = 8;
+const uint64_t SharedMemory::VERSION = 9;
 
-SharedMemory& SharedMemory::initialize(Options& options) {
+SharedMemory& SharedMemory::initialize(Options& options, Api::OsSysCalls& os_sys_calls) {
+  const uint64_t entry_size = Stats::RawStatData::size();
+  const uint64_t total_size = sizeof(SharedMemory) + (entry_size * options.maxStats());
+
   int flags = O_RDWR;
-  std::string shmem_name = fmt::format("/envoy_shared_memory_{}", options.baseId());
+  const std::string shmem_name = fmt::format("/envoy_shared_memory_{}", options.baseId());
   if (options.restartEpoch() == 0) {
     flags |= O_CREAT | O_EXCL;
 
     // If we are meant to be first, attempt to unlink a previous shared memory instance. If this
     // is a clean restart this should then allow the shm_open() call below to succeed.
-    shm_unlink(shmem_name.c_str());
+    os_sys_calls.shmUnlink(shmem_name.c_str());
   }
 
-  int shmem_fd = shm_open(shmem_name.c_str(), flags, S_IRUSR | S_IWUSR);
+  int shmem_fd = os_sys_calls.shmOpen(shmem_name.c_str(), flags, S_IRUSR | S_IWUSR);
   if (shmem_fd == -1) {
     PANIC(fmt::format("cannot open shared memory region {} check user permissions", shmem_name));
   }
 
   if (options.restartEpoch() == 0) {
-    int rc = ftruncate(shmem_fd, sizeof(SharedMemory));
+    int rc = os_sys_calls.ftruncate(shmem_fd, total_size);
     RELEASE_ASSERT(rc != -1);
     UNREFERENCED_PARAMETER(rc);
   }
 
   SharedMemory* shmem = reinterpret_cast<SharedMemory*>(
-      mmap(nullptr, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, shmem_fd, 0));
+      os_sys_calls.mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, shmem_fd, 0));
   RELEASE_ASSERT(shmem != MAP_FAILED);
+  RELEASE_ASSERT((reinterpret_cast<uintptr_t>(shmem) % alignof(decltype(shmem))) == 0);
 
   if (options.restartEpoch() == 0) {
-    shmem->size_ = sizeof(SharedMemory);
+    shmem->size_ = total_size;
     shmem->version_ = VERSION;
+    shmem->num_stats_ = options.maxStats();
+    shmem->entry_size_ = entry_size;
     shmem->initializeMutex(shmem->log_lock_);
     shmem->initializeMutex(shmem->access_log_lock_);
     shmem->initializeMutex(shmem->stat_lock_);
     shmem->initializeMutex(shmem->init_lock_);
   } else {
-    RELEASE_ASSERT(shmem->size_ == sizeof(SharedMemory));
+    RELEASE_ASSERT(shmem->size_ == total_size);
     RELEASE_ASSERT(shmem->version_ == VERSION);
+    RELEASE_ASSERT(shmem->num_stats_ == options.maxStats());
+    RELEASE_ASSERT(shmem->entry_size_ == entry_size);
   }
+
+  // Stats::RawStatData must be naturally aligned for atomics to work properly.
+  RELEASE_ASSERT((reinterpret_cast<uintptr_t>(shmem->stats_slots_) % alignof(Stats::RawStatData)) ==
+                 0);
 
   // Here we catch the case where a new Envoy starts up when the current Envoy has not yet fully
   // initialized. The startup logic is quite complicated, and it's not worth trying to handle this
@@ -86,14 +96,19 @@ void SharedMemory::initializeMutex(pthread_mutex_t& mutex) {
   pthread_mutex_init(&mutex, &attribute);
 }
 
-std::string SharedMemory::version() { return fmt::format("{}.{}", VERSION, sizeof(SharedMemory)); }
+std::string SharedMemory::version(size_t max_num_stats, size_t max_stat_name_len) {
+  return fmt::format("{}.{}.{}.{}", VERSION, sizeof(SharedMemory), max_num_stats,
+                     max_stat_name_len);
+}
 
-HotRestartImpl::HotRestartImpl(Options& options)
-    : options_(options), shmem_(SharedMemory::initialize(options)), log_lock_(shmem_.log_lock_),
-      access_log_lock_(shmem_.access_log_lock_), stat_lock_(shmem_.stat_lock_),
-      init_lock_(shmem_.init_lock_) {
+std::string SharedMemory::version() { return version(num_stats_, Stats::RawStatData::size()); }
 
-  my_domain_socket_ = bindDomainSocket(options.restartEpoch());
+HotRestartImpl::HotRestartImpl(Options& options, Api::OsSysCalls& os_sys_calls)
+    : options_(options), shmem_(SharedMemory::initialize(options, os_sys_calls)),
+      log_lock_(shmem_.log_lock_), access_log_lock_(shmem_.access_log_lock_),
+      stat_lock_(shmem_.stat_lock_), init_lock_(shmem_.init_lock_) {
+
+  my_domain_socket_ = bindDomainSocket(options.restartEpoch(), os_sys_calls);
   child_address_ = createDomainSocketAddress((options.restartEpoch() + 1));
   if (options.restartEpoch() != 0) {
     parent_address_ = createDomainSocketAddress((options.restartEpoch() + -1));
@@ -108,15 +123,22 @@ HotRestartImpl::HotRestartImpl(Options& options)
 
 Stats::RawStatData* HotRestartImpl::alloc(const std::string& name) {
   // Try to find the existing slot in shared memory, otherwise allocate a new one.
+  Stats::RawStatData* unused = nullptr;
   std::unique_lock<Thread::BasicLockable> lock(stat_lock_);
-  for (Stats::RawStatData& data : shmem_.stats_slots_) {
-    if (!data.initialized()) {
-      data.initialize(name);
-      return &data;
-    } else if (data.matches(name)) {
-      data.ref_count_++;
-      return &data;
+  for (uint64_t i = 0; i < shmem_.num_stats_; i++) {
+    const size_t offset = shmem_.entry_size_ * i;
+    Stats::RawStatData* data = reinterpret_cast<Stats::RawStatData*>(shmem_.stats_slots_ + offset);
+    if (!data->initialized()) {
+      unused = data;
+    } else if (data->matches(name)) {
+      data->ref_count_++;
+      return data;
     }
+  }
+
+  if (unused != nullptr) {
+    unused->initialize(name);
+    return unused;
   }
 
   return nullptr;
@@ -130,15 +152,15 @@ void HotRestartImpl::free(Stats::RawStatData& data) {
     return;
   }
 
-  memset(&data, 0, sizeof(Stats::RawStatData));
+  memset(&data, 0, Stats::RawStatData::size());
 }
 
-int HotRestartImpl::bindDomainSocket(uint64_t id) {
+int HotRestartImpl::bindDomainSocket(uint64_t id, Api::OsSysCalls& os_sys_calls) {
   // This actually creates the socket and binds it. We use the socket in datagram mode so we can
   // easily read single messages.
   int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
   sockaddr_un address = createDomainSocketAddress(id);
-  int rc = bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+  int rc = os_sys_calls.bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
   if (rc != 0) {
     throw EnvoyException(
         fmt::format("unable to bind domain socket with id={} (see --base-id option)", id));
@@ -149,7 +171,7 @@ int HotRestartImpl::bindDomainSocket(uint64_t id) {
 
 sockaddr_un HotRestartImpl::createDomainSocketAddress(uint64_t id) {
   // Right now we only allow a maximum of 3 concurrent envoy processes to be running. When the third
-  // stats up it will kill the oldest parent.
+  // starts up it will kill the oldest parent.
   const uint64_t MAX_CONCURRENT_PROCESSES = 3;
   id = id % MAX_CONCURRENT_PROCESSES;
 
@@ -433,7 +455,7 @@ void HotRestartImpl::terminateParent() {
 
 void HotRestartImpl::shutdown() { socket_event_.reset(); }
 
-std::string HotRestartImpl::version() { return SharedMemory::version(); }
+std::string HotRestartImpl::version() { return shmem_.version(); }
 
 } // namespace Server
 } // namespace Envoy

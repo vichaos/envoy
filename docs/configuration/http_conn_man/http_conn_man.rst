@@ -9,7 +9,6 @@ HTTP connection manager
 .. code-block:: json
 
   {
-    "type": "read",
     "name": "http_connection_manager",
     "config": {
       "codec_type": "...",
@@ -221,6 +220,7 @@ generate_request_id
   access_log
   tracing
   headers
+  header_sanitizing
   stats
   runtime
   rds

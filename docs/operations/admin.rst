@@ -40,6 +40,8 @@ modify different aspects of the server.
       cx_connect_fail, Counter, Total connection failures
       rq_total, Counter, Total requests
       rq_timeout, Counter, Total timed out requests
+      rq_success, Counter, Total requests with non-5xx responses
+      rq_error, Counter, Total requests with 5xx responses
       rq_active, Gauge, Total active requests
       healthy, String, The health status of the host. See below
       weight, Integer, Load balancing weight (1-100)
@@ -66,12 +68,16 @@ modify different aspects of the server.
 
   Enable or disable the CPU profiler. Requires compiling with gperftools.
 
+.. _operations_admin_interface_healthcheck_fail:
+
 .. http:get:: /healthcheck/fail
 
   Fail inbound health checks. This requires the use of the HTTP :ref:`health check filter
   <config_http_filters_health_check>`. This is useful for draining a server prior to shutting it
   down or doing a full restart. Invoking this command will universally fail health check requests
   regardless of how the filter is configured (pass through, etc.).
+
+.. _operations_admin_interface_healthcheck_ok:
 
 .. http:get:: /healthcheck/ok
 
@@ -124,7 +130,7 @@ The fields are:
 
 .. http:get:: /stats
 
-  Outputs all statistics on demand. This includes only counters and gauges. Timers are not output as
-  Envoy currently has no built in histogram support and relies on statsd for timer aggregation. This
-  command is very useful for local debugging. See :ref:`here <operations_stats>` for more
-  information.
+  Outputs all statistics on demand. This includes only counters and gauges. Histograms are not
+  output as Envoy currently has no built in histogram support and relies on statsd for
+  aggregation. This command is very useful for local debugging. See :ref:`here <operations_stats>`
+  for more information.

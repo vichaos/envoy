@@ -65,14 +65,6 @@ public:
   virtual const std::string& configPath() PURE;
 
   /**
-   * @return const std::string& the path to the v2 bootstrap file.
-   * TODO(htuch): We can eventually consolidate configPath()/bootstrapPath(), but today
-   * the config fetched from bootstrapPath() acts as an overlay to the config fetched from
-   * configPath() during v2 API bringup.
-   */
-  virtual const std::string& bootstrapPath() PURE;
-
-  /**
    * @return const std::string& the admin address output file.
    */
   virtual const std::string& adminAddressPath() PURE;
@@ -86,6 +78,11 @@ public:
    * @return spdlog::level::level_enum the default log level for the server.
    */
   virtual spdlog::level::level_enum logLevel() PURE;
+
+  /**
+   * @return const std::string& the log file path.
+   */
+  virtual const std::string& logPath() PURE;
 
   /**
    * @return the number of seconds that envoy will wait before shutting down the parent envoy during
@@ -123,6 +120,16 @@ public:
    * @return const std::string& the server's zone.
    */
   virtual const std::string& serviceZone() PURE;
+
+  /**
+   * @return uint64_t the maximum number of stats gauges and counters.
+   */
+  virtual uint64_t maxStats() PURE;
+
+  /**
+   * @return uint64_t the maximum name length of a stat.
+   */
+  virtual uint64_t maxStatNameLength() PURE;
 };
 
 } // namespace Server

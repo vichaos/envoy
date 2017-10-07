@@ -11,7 +11,7 @@
 #include "common/http/headers.h"
 #include "common/http/utility.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Http {
@@ -25,7 +25,7 @@ void CodeUtility::chargeBasicResponseStat(Stats::Scope& scope, const std::string
 }
 
 void CodeUtility::chargeResponseStat(const ResponseStatInfo& info) {
-  uint64_t response_code = Utility::getResponseStatus(info.response_headers_);
+  const uint64_t response_code = info.response_status_code_;
   chargeBasicResponseStat(info.cluster_scope_, info.prefix_, static_cast<Code>(response_code));
 
   std::string group_string = groupStringForResponseCode(static_cast<Code>(response_code));
@@ -81,31 +81,34 @@ void CodeUtility::chargeResponseStat(const ResponseStatInfo& info) {
 }
 
 void CodeUtility::chargeResponseTiming(const ResponseTimingInfo& info) {
-  info.cluster_scope_.deliverTimingToSinks(info.prefix_ + "upstream_rq_time", info.response_time_);
+  info.cluster_scope_.histogram(info.prefix_ + "upstream_rq_time")
+      .recordValue(info.response_time_.count());
   if (info.upstream_canary_) {
-    info.cluster_scope_.deliverTimingToSinks(info.prefix_ + "canary.upstream_rq_time",
-                                             info.response_time_);
+    info.cluster_scope_.histogram(info.prefix_ + "canary.upstream_rq_time")
+        .recordValue(info.response_time_.count());
   }
 
   if (info.internal_request_) {
-    info.cluster_scope_.deliverTimingToSinks(info.prefix_ + "internal.upstream_rq_time",
-                                             info.response_time_);
+    info.cluster_scope_.histogram(info.prefix_ + "internal.upstream_rq_time")
+        .recordValue(info.response_time_.count());
   } else {
-    info.cluster_scope_.deliverTimingToSinks(info.prefix_ + "external.upstream_rq_time",
-                                             info.response_time_);
+    info.cluster_scope_.histogram(info.prefix_ + "external.upstream_rq_time")
+        .recordValue(info.response_time_.count());
   }
 
   if (!info.request_vcluster_name_.empty()) {
-    info.global_scope_.deliverTimingToSinks("vhost." + info.request_vhost_name_ + ".vcluster." +
-                                                info.request_vcluster_name_ + ".upstream_rq_time",
-                                            info.response_time_);
+    info.global_scope_
+        .histogram("vhost." + info.request_vhost_name_ + ".vcluster." +
+                   info.request_vcluster_name_ + ".upstream_rq_time")
+        .recordValue(info.response_time_.count());
   }
 
   // Handle per zone stats.
   if (!info.from_zone_.empty() && !info.to_zone_.empty()) {
-    info.cluster_scope_.deliverTimingToSinks(
-        fmt::format("{}zone.{}.{}.upstream_rq_time", info.prefix_, info.from_zone_, info.to_zone_),
-        info.response_time_);
+    info.cluster_scope_
+        .histogram(fmt::format("{}zone.{}.{}.upstream_rq_time", info.prefix_, info.from_zone_,
+                               info.to_zone_))
+        .recordValue(info.response_time_.count());
   }
 }
 

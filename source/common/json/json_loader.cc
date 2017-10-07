@@ -10,10 +10,11 @@
 #include <vector>
 
 #include "common/common/assert.h"
+#include "common/common/hash.h"
 #include "common/common/utility.h"
 #include "common/filesystem/filesystem_impl.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 // Do not let RapidJson leak outside of this file.
 #include "rapidjson/document.h"
@@ -36,13 +37,12 @@ namespace {
 class Field;
 typedef std::shared_ptr<Field> FieldSharedPtr;
 
-class Field : public Object, public std::enable_shared_from_this<Field> {
+class Field : public Object {
 public:
   void setLineNumberStart(uint64_t line_number) { line_number_start_ = line_number; }
   void setLineNumberEnd(uint64_t line_number) { line_number_end_ = line_number; }
 
   // Container factories for handler.
-  // TODO(danielhochman): figure out how to do make_shared on private constructors
   static FieldSharedPtr createObject() { return FieldSharedPtr{new Field(Type::Object)}; }
   static FieldSharedPtr createArray() { return FieldSharedPtr{new Field(Type::Array)}; }
   static FieldSharedPtr createNull() { return FieldSharedPtr{new Field(Type::Null)}; }
@@ -324,7 +324,7 @@ uint64_t Field::hash() const {
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   asRapidJsonDocument().Accept(writer);
-  return std::hash<std::string>{}(buffer.GetString());
+  return HashUtil::xxHash64(buffer.GetString());
 }
 
 bool Field::getBoolean(const std::string& name) const {

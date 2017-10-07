@@ -30,7 +30,7 @@
 #include "common/upstream/logical_dns_cluster.h"
 #include "common/upstream/original_dst_cluster.h"
 
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Upstream {
@@ -48,8 +48,6 @@ getSourceAddress(const envoy::api::v2::Cluster& cluster,
   return source_address;
 }
 } // namespace
-
-Outlier::DetectorHostSinkNullImpl HostDescriptionImpl::null_outlier_detector_;
 
 Host::CreateConnectionData HostImpl::createConnection(Event::Dispatcher& dispatcher) const {
   return {createConnection(dispatcher, *cluster_, address_), shared_from_this()};
@@ -69,7 +67,11 @@ HostImpl::createConnection(Event::Dispatcher& dispatcher, const ClusterInfo& clu
 void HostImpl::weight(uint32_t new_weight) { weight_ = std::max(1U, std::min(100U, new_weight)); }
 
 ClusterStats ClusterInfoImpl::generateStats(Stats::Scope& scope) {
-  return {ALL_CLUSTER_STATS(POOL_COUNTER(scope), POOL_GAUGE(scope), POOL_TIMER(scope))};
+  return {ALL_CLUSTER_STATS(POOL_COUNTER(scope), POOL_GAUGE(scope), POOL_HISTOGRAM(scope))};
+}
+
+ClusterLoadReportStats ClusterInfoImpl::generateLoadReportStats(Stats::Scope& scope) {
+  return {ALL_CLUSTER_LOAD_REPORT_STATS(POOL_COUNTER(scope))};
 }
 
 ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::Cluster& config,
@@ -84,7 +86,9 @@ ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::Cluster& config,
       per_connection_buffer_limit_bytes_(
           PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, per_connection_buffer_limit_bytes, 1024 * 1024)),
       stats_scope_(stats.createScope(fmt::format("cluster.{}.", name_))),
-      stats_(generateStats(*stats_scope_)), features_(parseFeatures(config)),
+      stats_(generateStats(*stats_scope_)),
+      load_report_stats_(generateLoadReportStats(load_report_stats_store_)),
+      features_(parseFeatures(config)),
       http2_settings_(Http::Utility::parseHttp2Settings(config.http2_protocol_options())),
       resource_managers_(config, runtime, name_),
       maintenance_mode_runtime_key_(fmt::format("upstream.maintenance_mode.{}", name_)),
@@ -263,9 +267,9 @@ void ClusterImplBase::runUpdateCallbacks(const std::vector<HostSharedPtr>& hosts
   HostSetImpl::runUpdateCallbacks(hosts_added, hosts_removed);
 }
 
-void ClusterImplBase::setHealthChecker(HealthCheckerPtr&& health_checker) {
+void ClusterImplBase::setHealthChecker(const HealthCheckerSharedPtr& health_checker) {
   ASSERT(!health_checker_);
-  health_checker_ = std::move(health_checker);
+  health_checker_ = health_checker;
   health_checker_->start();
   health_checker_->addHostCheckCompleteCb([this](HostSharedPtr, bool changed_state) -> void {
     // If we get a health check completion that resulted in a state change, signal to
@@ -276,21 +280,21 @@ void ClusterImplBase::setHealthChecker(HealthCheckerPtr&& health_checker) {
   });
 }
 
-void ClusterImplBase::setOutlierDetector(Outlier::DetectorSharedPtr outlier_detector) {
+void ClusterImplBase::setOutlierDetector(const Outlier::DetectorSharedPtr& outlier_detector) {
   if (!outlier_detector) {
     return;
   }
 
-  outlier_detector_ = std::move(outlier_detector);
+  outlier_detector_ = outlier_detector;
   outlier_detector_->addChangedStateCb([this](HostSharedPtr) -> void { reloadHealthyHosts(); });
 }
 
 void ClusterImplBase::reloadHealthyHosts() {
   HostVectorConstSharedPtr hosts_copy(new std::vector<HostSharedPtr>(hosts()));
-  HostListsConstSharedPtr hosts_per_zone_copy(
-      new std::vector<std::vector<HostSharedPtr>>(hostsPerZone()));
-  updateHosts(hosts_copy, createHealthyHostList(hosts()), hosts_per_zone_copy,
-              createHealthyHostLists(hostsPerZone()), {}, {});
+  HostListsConstSharedPtr hosts_per_locality_copy(
+      new std::vector<std::vector<HostSharedPtr>>(hostsPerLocality()));
+  updateHosts(hosts_copy, createHealthyHostList(hosts()), hosts_per_locality_copy,
+              createHealthyHostLists(hostsPerLocality()), {}, {});
 }
 
 ClusterInfoImpl::ResourceManagers::ResourceManagers(const envoy::api::v2::Cluster& config,
@@ -337,8 +341,10 @@ StaticClusterImpl::StaticClusterImpl(const envoy::api::v2::Cluster& cluster,
                       added_via_api) {
   HostVectorSharedPtr new_hosts(new std::vector<HostSharedPtr>());
   for (const auto& host : cluster.hosts()) {
-    new_hosts->emplace_back(HostSharedPtr{
-        new HostImpl(info_, "", Network::Utility::fromProtoAddress(host), false, 1, "")});
+    new_hosts->emplace_back(
+        HostSharedPtr{new HostImpl(info_, "", Network::Utility::fromProtoAddress(host),
+                                   envoy::api::v2::Metadata::default_instance(), 1,
+                                   envoy::api::v2::Locality().default_instance())});
   }
 
   updateHosts(new_hosts, createHealthyHostList(*new_hosts), empty_host_lists_, empty_host_lists_,
@@ -514,7 +520,8 @@ void StrictDnsClusterImpl::ResolveTarget::startResolve() {
           ASSERT(address != nullptr);
           new_hosts.emplace_back(new HostImpl(parent_.info_, dns_address_,
                                               Network::Utility::getAddressWithPort(*address, port_),
-                                              false, 1, ""));
+                                              envoy::api::v2::Metadata::default_instance(), 1,
+                                              envoy::api::v2::Locality().default_instance()));
         }
 
         std::vector<HostSharedPtr> hosts_added;

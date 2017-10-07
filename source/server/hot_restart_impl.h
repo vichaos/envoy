@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 
+#include "envoy/api/os_sys_calls.h"
 #include "envoy/server/hot_restart.h"
 #include "envoy/server/options.h"
 
@@ -23,20 +24,25 @@ namespace Server {
  */
 class SharedMemory {
 public:
-  static std::string version();
+  static void configure(size_t max_num_stats, size_t max_stat_name_len);
+  static std::string version(uint64_t max_num_stats, uint64_t max_stat_name_len);
+  std::string version();
 
 private:
   struct Flags {
     static const uint64_t INITIALIZING = 0x1;
   };
 
-  SharedMemory() {}
+  // Due to the flexible-array-length of stats_slots_, c-style allocation
+  // and initialization are neccessary.
+  SharedMemory() = delete;
+  ~SharedMemory() = delete;
 
   /**
    * Initialize the shared memory segment, depending on whether we should be the first running
    * envoy, or a host restarted envoy process.
    */
-  static SharedMemory& initialize(Options& options);
+  static SharedMemory& initialize(Options& options, Api::OsSysCalls& os_sys_calls);
 
   /**
    * Initialize a pthread mutex for process shared locking.
@@ -47,12 +53,16 @@ private:
 
   uint64_t size_;
   uint64_t version_;
+  uint64_t num_stats_;
+  uint64_t entry_size_;
   std::atomic<uint64_t> flags_;
   pthread_mutex_t log_lock_;
   pthread_mutex_t access_log_lock_;
   pthread_mutex_t stat_lock_;
   pthread_mutex_t init_lock_;
-  std::array<Stats::RawStatData, 16384> stats_slots_;
+  alignas(Stats::RawStatData) uint8_t
+      stats_slots_[]; // array of Stats::RawStatData, which has a flexible-array-length member
+                      // so non-fixed size
 
   friend class HotRestartImpl;
 };
@@ -106,7 +116,7 @@ class HotRestartImpl : public HotRestart,
                        public Stats::RawStatDataAllocator,
                        Logger::Loggable<Logger::Id::main> {
 public:
-  HotRestartImpl(Options& options);
+  HotRestartImpl(Options& options, Api::OsSysCalls& os_sys_calls);
 
   Thread::BasicLockable& logLock() { return log_lock_; }
   Thread::BasicLockable& accessLogLock() { return access_log_lock_; }
@@ -179,7 +189,7 @@ private:
     return reinterpret_cast<rpc_class*>(base_message);
   }
 
-  int bindDomainSocket(uint64_t id);
+  int bindDomainSocket(uint64_t id, Api::OsSysCalls& os_sys_calls);
   sockaddr_un createDomainSocketAddress(uint64_t id);
   void onGetListenSocket(RpcGetListenSocketRequest& rpc);
   void onSocketEvent();

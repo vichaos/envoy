@@ -11,6 +11,7 @@
 #include "envoy/server/filter_config.h"
 
 #include "common/common/logger.h"
+#include "common/config/well_known_names.h"
 #include "common/http/conn_manager_impl.h"
 #include "common/json/json_loader.h"
 
@@ -34,8 +35,7 @@ public:
     return std::unique_ptr<envoy::api::v2::filter::HttpConnectionManager>(
         new envoy::api::v2::filter::HttpConnectionManager());
   }
-  std::string name() override { return "http_connection_manager"; }
-  NetworkFilterType type() override { return NetworkFilterType::Read; }
+  std::string name() override { return Config::NetworkFilterNames::get().HTTP_CONNECTION_MANAGER; }
 };
 
 /**
@@ -92,13 +92,12 @@ public:
   }
   const Network::Address::Instance& localAddress() override;
   const Optional<std::string>& userAgent() override { return user_agent_; }
+  Http::ConnectionManagerListenerStats& listenerStats() override { return listener_stats_; }
 
   static const std::string DEFAULT_SERVER_STRING;
 
 private:
   enum class CodecType { HTTP1, HTTP2, AUTO };
-
-  HttpFilterType stringToType(const std::string& type);
 
   FactoryContext& context_;
   std::list<HttpFilterFactoryCb> filter_factories_;
@@ -121,6 +120,7 @@ private:
   std::chrono::milliseconds drain_timeout_;
   bool generate_request_id_;
   Http::DateProvider& date_provider_;
+  Http::ConnectionManagerListenerStats listener_stats_;
 };
 
 } // namespace Configuration

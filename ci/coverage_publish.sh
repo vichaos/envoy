@@ -4,14 +4,16 @@
 # Travis logs.
 set -e
 
-if [ "${TRAVIS}" != "true" ]; then 
+if [ "${CIRCLECI}" != "true" ]; then
   exit 0
 fi
 
 # available for master builds and PRs from originating repository (not forks)
-if [ "${TRAVIS_SECURE_ENV_VARS}" == "true" ]; then
+if [ -z "$CIRCLE_PULL_REQUEST" ]
+then
   echo "Uploading coverage report..."
   
+  [[ -z "${ENVOY_BUILD_DIR}" ]] && ENVOY_BUILD_DIR=/build
   COVERAGE_FILE="${ENVOY_BUILD_DIR}/envoy/generated/coverage/coverage.html"
 
   if [ ! -f "${COVERAGE_FILE}" ]; then
@@ -19,24 +21,13 @@ if [ "${TRAVIS_SECURE_ENV_VARS}" == "true" ]; then
     exit 1
   fi
 
-  if [ -n "${TRAVIS_PULL_REQUEST_BRANCH}" ]; then
-    BRANCH_NAME="${TRAVIS_PULL_REQUEST_BRANCH}"
-  else
-    BRANCH_NAME="${TRAVIS_BRANCH}"
-  fi
-
+  BRANCH_NAME="${CIRCLE_BRANCH}"
   COVERAGE_DIR="$(dirname "${COVERAGE_FILE}")"
   S3_LOCATION="lyft-envoy/coverage/report-${BRANCH_NAME}"
-  
-  mkdir -p ~/.aws
-  echo "[profile coverage]" >> ~/.aws/config
-  echo "aws_access_key_id=${COVERAGE_AWS_ACCESS_KEY_ID}" >> ~/.aws/config
-  echo "aws_secret_access_key=${COVERAGE_AWS_SECRET_ACCESS_KEY}" >> ~/.aws/config
-  echo "region=us-east-1" >> ~/.aws/config
 
-  aws s3 cp "${COVERAGE_DIR}" "s3://${S3_LOCATION}" --recursive --profile coverage --acl public-read --quiet --sse
+  pip install awscli --upgrade
+  aws s3 cp "${COVERAGE_DIR}" "s3://${S3_LOCATION}" --recursive --acl public-read --quiet --sse
   echo "Coverage report for branch '${BRANCH_NAME}': https://s3.amazonaws.com/${S3_LOCATION}/coverage.html"
-
 else
   echo "Coverage report will not be uploaded for this build."
 fi

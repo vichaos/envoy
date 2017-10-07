@@ -38,7 +38,7 @@ const std::string Json::Schema::LISTENER_SCHEMA(R"EOF(
           },
           "config": {"type" : "object"}
         },
-        "required": ["type", "name", "config"],
+        "required": ["name", "config"],
         "additionalProperties": false
       }
     },
@@ -103,6 +103,10 @@ const std::string Json::Schema::RDS_CONFIGURATION_SCHEMA(R"EOF(
         "type" : "integer",
         "minimum" : 0,
         "exclusiveMinimum" : true
+      },
+      "api_type" : {
+        "type" : "string",
+        "enum" : ["REST_LEGACY", "REST", "GRPC"]
       }
     },
     "required" : ["cluster", "route_config_name"],
@@ -240,7 +244,7 @@ const std::string Json::Schema::HTTP_CONN_NETWORK_FILTER_SCHEMA(R"EOF(
           "name" : {"type": "string"},
           "config": {"type" : "object"}
         },
-        "required": ["type", "name", "config"],
+        "required": ["name", "config"],
         "additionalProperties" : false
       }
     },
@@ -350,11 +354,35 @@ const std::string Json::Schema::HTTP_CONN_NETWORK_FILTER_SCHEMA(R"EOF(
 
 const std::string Json::Schema::MONGO_PROXY_NETWORK_FILTER_SCHEMA(R"EOF(
   {
-    "$schema": "http://json-schema.org/schema#",
+    "$schema" : "http://json-schema.org/schema#",
     "type" : "object",
-    "properties":{
+    "properties" : {
       "stat_prefix" : {"type" : "string"},
-      "access_log" : {"type" : "string"}
+      "access_log" : {"type" : "string"},
+      "fault" : {
+        "type" : "object",
+        "properties" : {
+          "fixed_delay" : {
+            "type" : "object",
+            "properties" : {
+              "percent" : {
+                "type" : "integer",
+                "minimum" : 0,
+                "maximum" : 100
+              },
+              "duration_ms" : {
+                "type" : "integer",
+                "minimum" : 0,
+                "exclusiveMinimum": true
+              }
+            },
+            "required" : ["percent", "duration_ms"],
+            "additionalProperties" : false
+          }
+        },
+        "required": ["fixed_delay"],
+        "additionalProperties" : false
+      }
     },
     "required": ["stat_prefix"],
     "additionalProperties" : false
@@ -573,6 +601,23 @@ const std::string Json::Schema::VIRTUAL_HOST_CONFIGURATION_SCHEMA(R"EOF(
           "required": ["key", "value"],
           "additionalProperties": false
         }
+      },
+      "cors" : {
+        "type" : "object",
+        "properties" : {
+          "allow_origin": {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+          }},
+          "allow_methods" : {"type" : "string"},
+          "allow_headers" : {"type" : "string"},
+          "expose_headers" : {"type" : "string"},
+          "max_age" : {"type" : "string"},
+          "allow_credentials" : {"type" : "boolean"}
+        },
+        "required" : [],
+        "additionalProperties" : false
       }
     },
     "required" : ["name", "domains", "routes"],
@@ -609,6 +654,7 @@ const std::string Json::Schema::ROUTE_ENTRY_CONFIGURATION_SCHEMA(R"EOF(
     "properties" : {
       "prefix" : {"type" : "string"},
       "path" : {"type" : "string"},
+      "regex" : {"type" : "string"},
       "cluster" : {"type" : "string"},
       "cluster_header" : {"type" : "string"},
       "weighted_clusters": {"$ref" : "#/definitions/weighted_clusters"},
@@ -690,6 +736,32 @@ const std::string Json::Schema::ROUTE_ENTRY_CONFIGURATION_SCHEMA(R"EOF(
       "opaque_config" : {
         "type" : "object",
         "additionalProperties" : true
+      },
+      "decorator" : {
+        "type" : "object",
+        "properties" : {
+          "operation" : {"type" : "string"}
+        },
+        "required" : ["operation"],
+        "additionalProperties" : false
+      },
+      "cors" : {
+        "type" : "object",
+        "properties" : {
+          "allow_origin": {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+          }},
+          "allow_methods" : {"type" : "string"},
+          "allow_headers" : {"type" : "string"},
+          "expose_headers" : {"type" : "string"},
+          "max_age" : {"type" : "string"},
+          "allow_credentials" : {"type" : "boolean"},
+          "enabled" : {"type" : "boolean"}
+        },
+        "required" : [],
+        "additionalProperties" : false
       }
     },
     "additionalProperties" : false
@@ -1319,7 +1391,6 @@ const std::string Json::Schema::CLUSTER_SCHEMA(R"EOF(
     "properties" : {
       "name" : {
         "type" : "string",
-        "pattern" : "^[^:]+$",
         "minLength" : 1,
         "maxLength" : 60
       },

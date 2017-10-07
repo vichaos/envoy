@@ -59,23 +59,35 @@ public:
    * @param resources vector of resource names to fetch.
    */
   virtual void updateResources(const std::vector<std::string>& resources) PURE;
+
+  /**
+   * @return std::string version info from last accepted onConfigUpdate.
+   *
+   * TODO(dnoe): This would ideally return by reference, but this causes a
+   *             problem due to incompatible string implementations returned by
+   *             protobuf generated code. Revisit when string implementations
+   *             are converged.
+   */
+  virtual const std::string versionInfo() const PURE;
 };
 
 /**
  * Per subscription stats. @see stats_macros.h
  */
 // clang-format off
-#define ALL_SUBSCRIPTION_STATS(COUNTER) \
-  COUNTER(update_attempt)               \
-  COUNTER(update_success)               \
-  COUNTER(update_failure)               \
-  COUNTER(update_rejected)
+#define ALL_SUBSCRIPTION_STATS(COUNTER, GAUGE) \
+  COUNTER(update_attempt)                      \
+  COUNTER(update_success)                      \
+  COUNTER(update_failure)                      \
+  COUNTER(update_rejected)                     \
+  GAUGE(version)
+// clang-format on
 
 /**
  * Struct definition for per subscription stats. @see stats_macros.h
  */
 struct SubscriptionStats {
-  ALL_SUBSCRIPTION_STATS(GENERATE_COUNTER_STRUCT)
+  ALL_SUBSCRIPTION_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT)
 };
 
 } // namespace Config

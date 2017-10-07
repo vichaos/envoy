@@ -8,6 +8,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "envoy/event/timer.h"
@@ -24,6 +25,8 @@
 #include "common/common/callback_impl.h"
 #include "common/common/enum_to_int.h"
 #include "common/common/logger.h"
+#include "common/config/metadata.h"
+#include "common/config/well_known_names.h"
 #include "common/stats/stats_impl.h"
 #include "common/upstream/outlier_detection_impl.h"
 #include "common/upstream/resource_manager_impl.h"
@@ -33,44 +36,85 @@
 namespace Envoy {
 namespace Upstream {
 
+// Wrapper around envoy::api::v2::Locality to make it easier to compare for ordering in std::map and
+// in tests to construct literals.
+// TODO(htuch): Consider making this reference based when we have a single string implementation.
+class Locality : public std::tuple<std::string, std::string, std::string> {
+public:
+  Locality(const std::string& region, const std::string& zone, const std::string& sub_zone)
+      : std::tuple<std::string, std::string, std::string>(region, zone, sub_zone) {}
+  Locality(const envoy::api::v2::Locality& locality)
+      : std::tuple<std::string, std::string, std::string>(locality.region(), locality.zone(),
+                                                          locality.sub_zone()) {}
+  bool empty() const {
+    return std::get<0>(*this).empty() && std::get<1>(*this).empty() && std::get<2>(*this).empty();
+  }
+};
+
+/**
+ * Null implementation of HealthCheckHostMonitor.
+ */
+class HealthCheckHostMonitorNullImpl : public HealthCheckHostMonitor {
+public:
+  // Upstream::HealthCheckHostMonitor
+  void setUnhealthy() override {}
+};
+
 /**
  * Implementation of Upstream::HostDescription.
  */
 class HostDescriptionImpl : virtual public HostDescription {
 public:
   HostDescriptionImpl(ClusterInfoConstSharedPtr cluster, const std::string& hostname,
-                      Network::Address::InstanceConstSharedPtr dest_address, bool canary,
-                      const std::string& zone)
-      : cluster_(cluster), hostname_(hostname), address_(dest_address), canary_(canary),
-        zone_(zone), stats_{ALL_HOST_STATS(POOL_COUNTER(stats_store_), POOL_GAUGE(stats_store_))} {}
+                      Network::Address::InstanceConstSharedPtr dest_address,
+                      const envoy::api::v2::Metadata& metadata,
+                      const envoy::api::v2::Locality& locality)
+      : cluster_(cluster), hostname_(hostname), address_(dest_address),
+        canary_(Config::Metadata::metadataValue(metadata, Config::MetadataFilters::get().ENVOY_LB,
+                                                Config::MetadataEnvoyLbKeys::get().CANARY)
+                    .bool_value()),
+        metadata_(metadata), locality_(locality), stats_{ALL_HOST_STATS(POOL_COUNTER(stats_store_),
+                                                                        POOL_GAUGE(stats_store_))} {
+  }
 
   // Upstream::HostDescription
   bool canary() const override { return canary_; }
+  const envoy::api::v2::Metadata& metadata() const override { return metadata_; }
   const ClusterInfo& cluster() const override { return *cluster_; }
-  Outlier::DetectorHostSink& outlierDetector() const override {
+  HealthCheckHostMonitor& healthChecker() const override {
+    if (health_checker_) {
+      return *health_checker_;
+    } else {
+      static HealthCheckHostMonitorNullImpl* null_health_checker =
+          new HealthCheckHostMonitorNullImpl();
+      return *null_health_checker;
+    }
+  }
+  Outlier::DetectorHostMonitor& outlierDetector() const override {
     if (outlier_detector_) {
       return *outlier_detector_;
     } else {
-      return null_outlier_detector_;
+      static Outlier::DetectorHostMonitorNullImpl* null_outlier_detector =
+          new Outlier::DetectorHostMonitorNullImpl();
+      return *null_outlier_detector;
     }
   }
   const HostStats& stats() const override { return stats_; }
   const std::string& hostname() const override { return hostname_; }
   Network::Address::InstanceConstSharedPtr address() const override { return address_; }
-  const std::string& zone() const override { return zone_; }
+  const envoy::api::v2::Locality& locality() const override { return locality_; }
 
 protected:
   ClusterInfoConstSharedPtr cluster_;
   const std::string hostname_;
   Network::Address::InstanceConstSharedPtr address_;
   const bool canary_;
-  const std::string zone_;
+  const envoy::api::v2::Metadata metadata_;
+  const envoy::api::v2::Locality locality_;
   Stats::IsolatedStoreImpl stats_store_;
   HostStats stats_;
-  Outlier::DetectorHostSinkPtr outlier_detector_;
-
-private:
-  static Outlier::DetectorHostSinkNullImpl null_outlier_detector_;
+  Outlier::DetectorHostMonitorPtr outlier_detector_;
+  HealthCheckHostMonitorPtr health_checker_;
 };
 
 /**
@@ -81,9 +125,10 @@ class HostImpl : public HostDescriptionImpl,
                  public std::enable_shared_from_this<HostImpl> {
 public:
   HostImpl(ClusterInfoConstSharedPtr cluster, const std::string& hostname,
-           Network::Address::InstanceConstSharedPtr address, bool canary, uint32_t initial_weight,
-           const std::string& zone)
-      : HostDescriptionImpl(cluster, hostname, address, canary, zone), used_(true) {
+           Network::Address::InstanceConstSharedPtr address,
+           const envoy::api::v2::Metadata& metadata, uint32_t initial_weight,
+           const envoy::api::v2::Locality& locality)
+      : HostDescriptionImpl(cluster, hostname, address, metadata, locality), used_(true) {
     weight(initial_weight);
   }
 
@@ -94,7 +139,10 @@ public:
   void healthFlagClear(HealthFlag flag) override { health_flags_ &= ~enumToInt(flag); }
   bool healthFlagGet(HealthFlag flag) const override { return health_flags_ & enumToInt(flag); }
   void healthFlagSet(HealthFlag flag) override { health_flags_ |= enumToInt(flag); }
-  void setOutlierDetector(Outlier::DetectorHostSinkPtr&& outlier_detector) override {
+  void setHealthChecker(HealthCheckHostMonitorPtr&& health_checker) override {
+    health_checker_ = std::move(health_checker);
+  }
+  void setOutlierDetector(Outlier::DetectorHostMonitorPtr&& outlier_detector) override {
     outlier_detector_ = std::move(outlier_detector);
   }
   bool healthy() const override { return !health_flags_; }
@@ -126,29 +174,29 @@ class HostSetImpl : public virtual HostSet {
 public:
   HostSetImpl()
       : hosts_(new std::vector<HostSharedPtr>()), healthy_hosts_(new std::vector<HostSharedPtr>()),
-        hosts_per_zone_(new std::vector<std::vector<HostSharedPtr>>()),
-        healthy_hosts_per_zone_(new std::vector<std::vector<HostSharedPtr>>()) {}
+        hosts_per_locality_(new std::vector<std::vector<HostSharedPtr>>()),
+        healthy_hosts_per_locality_(new std::vector<std::vector<HostSharedPtr>>()) {}
 
   void updateHosts(HostVectorConstSharedPtr hosts, HostVectorConstSharedPtr healthy_hosts,
-                   HostListsConstSharedPtr hosts_per_zone,
-                   HostListsConstSharedPtr healthy_hosts_per_zone,
+                   HostListsConstSharedPtr hosts_per_locality,
+                   HostListsConstSharedPtr healthy_hosts_per_locality,
                    const std::vector<HostSharedPtr>& hosts_added,
                    const std::vector<HostSharedPtr>& hosts_removed) {
-    hosts_ = hosts;
-    healthy_hosts_ = healthy_hosts;
-    hosts_per_zone_ = hosts_per_zone;
-    healthy_hosts_per_zone_ = healthy_hosts_per_zone;
+    hosts_ = std::move(hosts);
+    healthy_hosts_ = std::move(healthy_hosts);
+    hosts_per_locality_ = std::move(hosts_per_locality);
+    healthy_hosts_per_locality_ = std::move(healthy_hosts_per_locality);
     runUpdateCallbacks(hosts_added, hosts_removed);
   }
 
   // Upstream::HostSet
   const std::vector<HostSharedPtr>& hosts() const override { return *hosts_; }
   const std::vector<HostSharedPtr>& healthyHosts() const override { return *healthy_hosts_; }
-  const std::vector<std::vector<HostSharedPtr>>& hostsPerZone() const override {
-    return *hosts_per_zone_;
+  const std::vector<std::vector<HostSharedPtr>>& hostsPerLocality() const override {
+    return *hosts_per_locality_;
   }
-  const std::vector<std::vector<HostSharedPtr>>& healthyHostsPerZone() const override {
-    return *healthy_hosts_per_zone_;
+  const std::vector<std::vector<HostSharedPtr>>& healthyHostsPerLocality() const override {
+    return *healthy_hosts_per_locality_;
   }
   Common::CallbackHandle* addMemberUpdateCb(MemberUpdateCb callback) const override {
     return member_update_cb_helper_.add(callback);
@@ -163,8 +211,8 @@ protected:
 private:
   HostVectorConstSharedPtr hosts_;
   HostVectorConstSharedPtr healthy_hosts_;
-  HostListsConstSharedPtr hosts_per_zone_;
-  HostListsConstSharedPtr healthy_hosts_per_zone_;
+  HostListsConstSharedPtr hosts_per_locality_;
+  HostListsConstSharedPtr healthy_hosts_per_locality_;
   mutable Common::CallbackManager<const std::vector<HostSharedPtr>&,
                                   const std::vector<HostSharedPtr>&>
       member_update_cb_helper_;
@@ -183,6 +231,7 @@ public:
                   Ssl::ContextManager& ssl_context_manager, bool added_via_api);
 
   static ClusterStats generateStats(Stats::Scope& scope);
+  static ClusterLoadReportStats generateLoadReportStats(Stats::Scope& scope);
 
   // Upstream::ClusterInfo
   bool addedViaApi() const override { return added_via_api_; }
@@ -200,6 +249,7 @@ public:
   Ssl::ClientContext* sslContext() const override { return ssl_ctx_.get(); }
   ClusterStats& stats() const override { return stats_; }
   Stats::Scope& statsScope() const override { return *stats_scope_; }
+  ClusterLoadReportStats& loadReportStats() const override { return load_report_stats_; }
   const Network::Address::InstanceConstSharedPtr& sourceAddress() const override {
     return source_address_;
   };
@@ -226,6 +276,8 @@ private:
   const uint32_t per_connection_buffer_limit_bytes_;
   Stats::ScopePtr stats_scope_;
   mutable ClusterStats stats_;
+  Stats::IsolatedStoreImpl load_report_stats_store_;
+  mutable ClusterLoadReportStats load_report_stats_;
   Ssl::ClientContextPtr ssl_ctx_;
   const uint64_t features_;
   const Http::Http2Settings http2_settings_;
@@ -258,13 +310,13 @@ public:
    * creation since the health checker assumes that the cluster has already been fully initialized
    * so there is a cyclic dependency. However we want the cluster to own the health checker.
    */
-  void setHealthChecker(HealthCheckerPtr&& health_checker);
+  void setHealthChecker(const HealthCheckerSharedPtr& health_checker);
 
   /**
    * Optionally set the outlier detector for the primary cluster. Done for the same reason as
    * documented in setHealthChecker().
    */
-  void setOutlierDetector(Outlier::DetectorSharedPtr outlier_detector);
+  void setOutlierDetector(const Outlier::DetectorSharedPtr& outlier_detector);
 
   // Upstream::Cluster
   ClusterInfoConstSharedPtr info() const override { return info_; }
@@ -288,7 +340,7 @@ protected:
   ClusterInfoConstSharedPtr
       info_; // This cluster info stores the stats scope so it must be initialized first
              // and destroyed last.
-  HealthCheckerPtr health_checker_;
+  HealthCheckerSharedPtr health_checker_;
   Outlier::DetectorSharedPtr outlier_detector_;
 
 private:

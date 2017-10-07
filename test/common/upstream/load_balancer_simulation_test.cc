@@ -10,21 +10,24 @@
 #include "test/mocks/runtime/mocks.h"
 #include "test/mocks/upstream/mocks.h"
 
+#include "fmt/format.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "spdlog/spdlog.h"
 
-namespace Envoy {
 using testing::NiceMock;
 using testing::Return;
 
+namespace Envoy {
 namespace Upstream {
 
 static HostSharedPtr newTestHost(Upstream::ClusterInfoConstSharedPtr cluster,
                                  const std::string& url, uint32_t weight = 1,
                                  const std::string& zone = "") {
-  return HostSharedPtr{
-      new HostImpl(cluster, "", Network::Utility::resolveUrl(url), false, weight, zone)};
+  envoy::api::v2::Locality locality;
+  locality.set_zone(zone);
+  return HostSharedPtr{new HostImpl(cluster, "", Network::Utility::resolveUrl(url),
+                                    envoy::api::v2::Metadata::default_instance(), weight,
+                                    locality)};
 }
 
 /**
@@ -67,7 +70,7 @@ public:
     std::map<std::string, uint32_t> hits;
     for (uint32_t i = 0; i < total_number_of_requests; ++i) {
       HostSharedPtr from_host = selectOriginatingHost(*originating_hosts);
-      uint32_t from_zone = atoi(from_host->zone().c_str());
+      uint32_t from_zone = atoi(from_host->locality().zone().c_str());
 
       // Populate host set for upstream cluster.
       HostListsSharedPtr per_zone_upstream(new std::vector<std::vector<HostSharedPtr>>());
@@ -79,8 +82,8 @@ public:
 
         per_zone_upstream->push_back((*upstream_per_zone_hosts)[zone]);
       }
-      cluster_.hosts_per_zone_ = *per_zone_upstream;
-      cluster_.healthy_hosts_per_zone_ = *per_zone_upstream;
+      cluster_.hosts_per_locality_ = *per_zone_upstream;
+      cluster_.healthy_hosts_per_locality_ = *per_zone_upstream;
 
       // Populate host set for originating cluster.
       HostListsSharedPtr per_zone_local(new std::vector<std::vector<HostSharedPtr>>());

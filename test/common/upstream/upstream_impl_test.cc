@@ -239,8 +239,8 @@ TEST(StrictDnsClusterImplTest, Basic) {
               ContainerEq(hostListToAddresses(cluster.hosts())));
 
   EXPECT_EQ(2UL, cluster.healthyHosts().size());
-  EXPECT_EQ(0UL, cluster.hostsPerZone().size());
-  EXPECT_EQ(0UL, cluster.healthyHostsPerZone().size());
+  EXPECT_EQ(0UL, cluster.hostsPerLocality().size());
+  EXPECT_EQ(0UL, cluster.healthyHostsPerLocality().size());
 
   for (const HostSharedPtr& host : cluster.hosts()) {
     EXPECT_EQ(cluster.info().get(), &host->cluster());
@@ -258,50 +258,47 @@ TEST(StrictDnsClusterImplTest, Basic) {
 
 TEST(HostImplTest, HostCluster) {
   MockCluster cluster;
-  HostImpl host(cluster.info_, "", Network::Utility::resolveUrl("tcp://10.0.0.1:1234"), false, 1,
-                "");
-  EXPECT_EQ(cluster.info_.get(), &host.cluster());
-  EXPECT_EQ("", host.hostname());
-  EXPECT_FALSE(host.canary());
-  EXPECT_EQ("", host.zone());
+  HostSharedPtr host = makeTestHost(cluster.info_, "tcp://10.0.0.1:1234", 1);
+  EXPECT_EQ(cluster.info_.get(), &host->cluster());
+  EXPECT_EQ("", host->hostname());
+  EXPECT_FALSE(host->canary());
+  EXPECT_EQ("", host->locality().zone());
 }
 
 TEST(HostImplTest, Weight) {
   MockCluster cluster;
 
-  {
-    HostImpl host(cluster.info_, "", Network::Utility::resolveUrl("tcp://10.0.0.1:1234"), false, 0,
-                  "");
-    EXPECT_EQ(1U, host.weight());
-  }
+  EXPECT_EQ(1U, makeTestHost(cluster.info_, "tcp://10.0.0.1:1234", 0)->weight());
+  EXPECT_EQ(100U, makeTestHost(cluster.info_, "tcp://10.0.0.1:1234", 101)->weight());
 
-  {
-    HostImpl host(cluster.info_, "", Network::Utility::resolveUrl("tcp://10.0.0.1:1234"), false,
-                  101, "");
-    EXPECT_EQ(100U, host.weight());
-  }
-
-  {
-    HostImpl host(cluster.info_, "", Network::Utility::resolveUrl("tcp://10.0.0.1:1234"), false, 50,
-                  "");
-    EXPECT_EQ(50U, host.weight());
-    host.weight(51);
-    EXPECT_EQ(51U, host.weight());
-    host.weight(0);
-    EXPECT_EQ(1U, host.weight());
-    host.weight(101);
-    EXPECT_EQ(100U, host.weight());
-  }
+  HostSharedPtr host = makeTestHost(cluster.info_, "tcp://10.0.0.1:1234", 50);
+  EXPECT_EQ(50U, host->weight());
+  host->weight(51);
+  EXPECT_EQ(51U, host->weight());
+  host->weight(0);
+  EXPECT_EQ(1U, host->weight());
+  host->weight(101);
+  EXPECT_EQ(100U, host->weight());
 }
 
-TEST(HostImplTest, HostameCanaryAndZone) {
+TEST(HostImplTest, HostameCanaryAndLocality) {
   MockCluster cluster;
+  envoy::api::v2::Metadata metadata;
+  Config::Metadata::mutableMetadataValue(metadata, Config::MetadataFilters::get().ENVOY_LB,
+                                         Config::MetadataEnvoyLbKeys::get().CANARY)
+      .set_bool_value(true);
+  envoy::api::v2::Locality locality;
+  locality.set_region("oceania");
+  locality.set_zone("hello");
+  locality.set_sub_zone("world");
   HostImpl host(cluster.info_, "lyft.com", Network::Utility::resolveUrl("tcp://10.0.0.1:1234"),
-                true, 1, "hello");
+                metadata, 1, locality);
   EXPECT_EQ(cluster.info_.get(), &host.cluster());
   EXPECT_EQ("lyft.com", host.hostname());
   EXPECT_TRUE(host.canary());
-  EXPECT_EQ("hello", host.zone());
+  EXPECT_EQ("oceania", host.locality().region());
+  EXPECT_EQ("hello", host.locality().zone());
+  EXPECT_EQ("world", host.locality().sub_zone());
 }
 
 TEST(StaticClusterImplTest, EmptyHostname) {
@@ -412,8 +409,8 @@ TEST(StaticClusterImplTest, HealthyStat) {
   Outlier::MockDetector* outlier_detector = new NiceMock<Outlier::MockDetector>();
   cluster.setOutlierDetector(Outlier::DetectorSharedPtr{outlier_detector});
 
-  MockHealthChecker* health_checker = new NiceMock<MockHealthChecker>();
-  cluster.setHealthChecker(HealthCheckerPtr{health_checker});
+  std::shared_ptr<MockHealthChecker> health_checker(new NiceMock<MockHealthChecker>());
+  cluster.setHealthChecker(health_checker);
 
   EXPECT_EQ(2UL, cluster.healthyHosts().size());
   EXPECT_EQ(2UL, cluster.info()->stats().membership_healthy_.value());
@@ -483,8 +480,9 @@ TEST(StaticClusterImplTest, UrlConfig) {
   EXPECT_THAT(std::list<std::string>({"10.0.0.1:11001", "10.0.0.2:11002"}),
               ContainerEq(hostListToAddresses(cluster.hosts())));
   EXPECT_EQ(2UL, cluster.healthyHosts().size());
-  EXPECT_EQ(0UL, cluster.hostsPerZone().size());
-  EXPECT_EQ(0UL, cluster.healthyHostsPerZone().size());
+  EXPECT_EQ(0UL, cluster.hostsPerLocality().size());
+  EXPECT_EQ(0UL, cluster.healthyHostsPerLocality().size());
+  cluster.hosts()[0]->healthChecker().setUnhealthy();
 }
 
 TEST(StaticClusterImplTest, UnsupportedLBType) {

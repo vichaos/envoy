@@ -4,7 +4,7 @@ Two flavors of Envoy Docker images, based on Ubuntu and Alpine Linux, are built.
 
 ## Ubuntu envoy image
 The Ubuntu based Envoy Docker image at [`lyft/envoy-build:<hash>`](https://hub.docker.com/r/lyft/envoy-build/) is used for Travis CI checks,
-where `<hash>` is specified in [`envoy_build_sha.sh`](https://github.com/lyft/envoy/blob/master/ci/envoy_build_sha.sh). Developers
+where `<hash>` is specified in [`envoy_build_sha.sh`](https://github.com/envoyproxy/envoy/blob/master/ci/envoy_build_sha.sh). Developers
 may work with `lyft/envoy-build:latest` to provide a self-contained environment for building Envoy binaries and
 running tests that reflects the latest built Ubuntu Envoy image. Moreover, the Docker image
 at [`lyft/envoy:<hash>`](https://hub.docker.com/r/lyft/envoy/) is an image that has an Envoy binary at `/usr/local/bin/envoy`. The `<hash>`
@@ -20,8 +20,13 @@ master commit at which the binary was compiled, and `latest` corresponds to a bi
 
 # Build image base and compiler versions
 
-The current build image is based on Ubuntu 16.04 (Xenial) which uses the GCC 5.4 compiler. We also
-install and use the clang-5.0 compiler for some sanitizing runs.
+Currently there are three build images:
+
+* `lyft/envoy-build` &mdash; alias to `lyft/envoy-build-ubuntu`.
+* `lyft/envoy-build-ubuntu` &mdash; based on Ubuntu 16.04 (Xenial) which uses the GCC 5.4 compiler.
+* `lyft/envoy-build-centos` &mdash; based on CentOS 7 which uses the GCC 5.3.1 compiler (devtoolset-4).
+
+We also install and use the clang-5.0 compiler for some sanitizing runs.
 
 # Building and running tests as a developer
 
@@ -31,10 +36,16 @@ An example basic invocation to build a developer version of the Envoy static bin
 ./ci/run_envoy_docker.sh './ci/do_ci.sh bazel.dev'
 ```
 
+The build image defaults to `lyft/envoy-build-ubuntu`, but you can choose build image by setting `IMAGE_NAME` in the environment,
+e.g. to use the `lyft/envoy-build-centos` image you can run:
+
+```bash
+IMAGE_NAME=lyft/envoy-build-centos ./ci/run_envoy_docker.sh './ci/do_ci.sh bazel.dev'
+```
+
 The Envoy binary can be found in `/tmp/envoy-docker-build/envoy/source/exe/envoy-fastbuild` on the Docker host. You
 can control this by setting `ENVOY_DOCKER_BUILD_DIR` in the environment, e.g. to
 generate the binary in `~/build/envoy/source/exe/envoy-fastbuild` you can run:
-
 
 ```bash
 ENVOY_DOCKER_BUILD_DIR=~/build ./ci/run_envoy_docker.sh './ci/do_ci.sh bazel.dev'
@@ -60,7 +71,6 @@ The build artifact can be found in `/tmp/envoy-docker-build/envoy/source/exe/env
 
 The `./ci/run_envoy_docker.sh './ci/do_ci.sh <TARGET>'` targets are:
 
-
 * `bazel.asan` &mdash; build and run tests under `-c dbg --config=clang-asan` with clang-5.0.
 * `bazel.debug` &mdash; build Envoy static binary and run tests under `-c dbg`.
 * `bazel.debug.server_only` &mdash; build Envoy static binary under `-c dbg`.
@@ -68,6 +78,7 @@ The `./ci/run_envoy_docker.sh './ci/do_ci.sh <TARGET>'` targets are:
 * `bazel.release` &mdash; build Envoy static binary and run tests under `-c opt` with gcc.
 * `bazel.release.server_only` &mdash; build Envoy static binary under `-c opt` with gcc.
 * `bazel.coverage` &mdash; build and run tests under `-c dbg` with gcc, generating coverage information in `$ENVOY_DOCKER_BUILD_DIR/envoy/generated/coverage/coverage.html`.
+* `bazel.coverity` &mdash; build Envoy static binary and run Coverity Scan static analysis.
 * `bazel.tsan` &mdash; build and run tests under `-c dbg --config=clang-tsan` with clang-5.0.
 * `check_format`&mdash; run `clang-format` 5.0 and `buildifier` on entire source tree.
 * `fix_format`&mdash; run and enforce `clang-format` 5.0 and `buildifier` on entire source tree.
@@ -75,21 +86,42 @@ The `./ci/run_envoy_docker.sh './ci/do_ci.sh <TARGET>'` targets are:
 # Testing changes to the build image as a developer
 
 While all changes to the build image should eventually be upstreamed, it can be useful to
-test those changes locally before sending out a pull request.  To experiment
+test those changes locally before sending out a pull request. To experiment
 with a local clone of the upstream build image you can make changes to files such as
 build_container.sh locally and then run:
 
 ```bash
+DISTRO=ubuntu
 cd ci/build_container
-TRAVIS_COMMIT=my_tag ./docker_build.sh  # Wait patiently for quite some time
+LINUX_DISTRO="${DISTRO}" CIRCLE_SHA1=my_tag ./docker_build.sh  # Wait patiently for quite some time
 cd ../..
-IMAGE_ID=my_tag ./ci/run_envoy_docker.sh './ci/do_ci.sh bazel.whatever'
+IMAGE_NAME="lyft/envoy-build-${DISTRO}" IMAGE_ID=my_tag ./ci/run_envoy_docker.sh './ci/do_ci.sh bazel.whatever'
 ```
 
-The final call will run against your local copy of the build image.
+This build the Ubuntu based `lyft/envoy-build-ubuntu` image, and the final call will run against your local copy of the build image.
+To build the CentOS based `lyft/envoy-build-ubuntu-centos` image, change `DISTRO` above to *centos*.
 
 # MacOS Build Flow
 
-The MacOS builds are hosted on [CircleCI](https://circleci.com/gh/turbinelabs/envoy) and managed by [TurbineLabs](https://turbinelabs.io/), whom did the initial MacOS port. In order to make possible this integration without granting full repo control, a custom webhook handles arbitrating PR events that in turn initiate builds on CircleCI.
+The MacOS CI build is part of the [CircleCI](https://circleci.com/gh/envoyproxy/envoy) workflow.
+Dependencies are installed by the `ci/mac_ci_setup.sh` script, via [Homebrew](https://brew.sh),
+which is pre-installed on the CircleCI MacOS image. The dependencies are cached are re-installed
+on every build. The `ci/mac_ci_steps.sh` script executes the specific commands that
+build and test Envoy.
 
-![MacOS flow](macosflow.png)
+# Coverity Scan Build Flow
+
+[Coverity Scan Envoy Project](https://scan.coverity.com/projects/envoy-proxy)
+
+Coverity Scan static analysis is not run within Envoy CI. However, Envoy can be locally built and
+submitted for analysis. A Coverity Scan Envoy project token must be generated from the
+[Coverity Project Settings](https://scan.coverity.com/projects/envoy-proxy?tab=pro).
+With this token, running `ci/do_coverity_local.sh` will use the Ubuntu based
+`lyft/envoy-build-ubuntu` image to build the Envoy static binary with the Coverity Scan tool chain.
+This process generates an artifact, envoy-coverity-output.tgz, that is uploaded to Coverity for
+static analysis.
+
+To build and submit for analysis:
+```bash
+COVERITY_TOKEN={generated Coverity project token} ./ci/do_coverity_local.sh
+```

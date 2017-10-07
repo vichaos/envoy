@@ -11,7 +11,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::Invoke;
 using testing::Return;
 using testing::ReturnPointee;
@@ -19,11 +18,12 @@ using testing::ReturnRef;
 using testing::SaveArg;
 using testing::_;
 
+namespace Envoy {
 namespace Upstream {
 namespace Outlier {
 
-MockDetectorHostSink::MockDetectorHostSink() {}
-MockDetectorHostSink::~MockDetectorHostSink() {}
+MockDetectorHostMonitor::MockDetectorHostMonitor() {}
+MockDetectorHostMonitor::~MockDetectorHostMonitor() {}
 
 MockEventLogger::MockEventLogger() {}
 MockEventLogger::~MockEventLogger() {}
@@ -38,6 +38,9 @@ MockDetector::~MockDetector() {}
 
 } // namespace Outlier
 
+MockHealthCheckHostMonitor::MockHealthCheckHostMonitor() {}
+MockHealthCheckHostMonitor::~MockHealthCheckHostMonitor() {}
+
 MockHostDescription::MockHostDescription()
     : address_(Network::Utility::resolveUrl("tcp://10.0.0.1:443")) {
   ON_CALL(*this, hostname()).WillByDefault(ReturnRef(hostname_));
@@ -45,6 +48,7 @@ MockHostDescription::MockHostDescription()
   ON_CALL(*this, outlierDetector()).WillByDefault(ReturnRef(outlier_detector_));
   ON_CALL(*this, stats()).WillByDefault(ReturnRef(stats_));
   ON_CALL(*this, cluster()).WillByDefault(ReturnRef(cluster_));
+  ON_CALL(*this, healthChecker()).WillByDefault(ReturnRef(health_checker_));
 }
 
 MockHostDescription::~MockHostDescription() {}
@@ -59,6 +63,7 @@ MockHost::~MockHost() {}
 
 MockClusterInfo::MockClusterInfo()
     : stats_(ClusterInfoImpl::generateStats(stats_store_)),
+      load_report_stats_(ClusterInfoImpl::generateLoadReportStats(load_report_stats_store_)),
       resource_manager_(new Upstream::ResourceManagerImpl(runtime_, "fake_key", 1, 1024, 1024, 1)) {
 
   ON_CALL(*this, connectTimeout()).WillByDefault(Return(std::chrono::milliseconds(1)));
@@ -68,6 +73,7 @@ MockClusterInfo::MockClusterInfo()
       .WillByDefault(ReturnPointee(&max_requests_per_connection_));
   ON_CALL(*this, stats()).WillByDefault(ReturnRef(stats_));
   ON_CALL(*this, statsScope()).WillByDefault(ReturnRef(stats_store_));
+  ON_CALL(*this, loadReportStats()).WillByDefault(ReturnRef(load_report_stats_));
   ON_CALL(*this, sourceAddress()).WillByDefault(ReturnRef(source_address_));
   ON_CALL(*this, resourceManager(_))
       .WillByDefault(Invoke(
@@ -85,8 +91,8 @@ MockCluster::MockCluster() {
       }));
   ON_CALL(*this, hosts()).WillByDefault(ReturnRef(hosts_));
   ON_CALL(*this, healthyHosts()).WillByDefault(ReturnRef(healthy_hosts_));
-  ON_CALL(*this, hostsPerZone()).WillByDefault(ReturnRef(hosts_per_zone_));
-  ON_CALL(*this, healthyHostsPerZone()).WillByDefault(ReturnRef(healthy_hosts_per_zone_));
+  ON_CALL(*this, hostsPerLocality()).WillByDefault(ReturnRef(hosts_per_locality_));
+  ON_CALL(*this, healthyHostsPerLocality()).WillByDefault(ReturnRef(healthy_hosts_per_locality_));
   ON_CALL(*this, info()).WillByDefault(Return(info_));
   ON_CALL(*this, setInitializedCb(_))
       .WillByDefault(Invoke([this](std::function<void()> callback) -> void {

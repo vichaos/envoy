@@ -1,7 +1,3 @@
 FROM ubuntu:14.04
 
-ADD build_release/envoy /usr/local/bin/envoy
-RUN apt-get update && apt-get install -y \
-    build-essential
-RUN strip /usr/local/bin/envoy
-RUN apt-get purge -y build-essential
+ADD build_release_stripped/envoy /usr/local/bin/envoy

@@ -14,9 +14,11 @@
 #include "envoy/stats/stats.h"
 
 #include "common/http/header_map_impl.h"
+#include "common/protobuf/utility.h"
 
 #include "test/test_common/printers.h"
 
+#include "api/bootstrap.pb.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -105,6 +107,13 @@ public:
   }
 
   /**
+   * Parse bootstrap config from v1 JSON static config string.
+   * @param json_string source v1 JSON static config string.
+   * @return envoy::api::v2::Bootstrap.
+   */
+  static envoy::api::v2::Bootstrap parseBootstrapFromJson(const std::string& json_string);
+
+  /**
    * Returns a "novel" IPv4 loopback address, if available.
    * For many tests, we want a loopback address other than 127.0.0.1 where possible.  For some
    * platforms such as OSX, only 127.0.0.1 is available for IPv4 loopback.
@@ -117,6 +126,17 @@ public:
 #else
     return "127.0.0.9";
 #endif
+  }
+
+  /**
+   * Return typed proto message object for YAML.
+   * @param yaml YAML string.
+   * @return MessageType parsed from yaml.
+   */
+  template <class MessageType> static MessageType parseYaml(const std::string& yaml) {
+    MessageType message;
+    MessageUtil::loadFromYaml(yaml, message);
+    return message;
   }
 };
 

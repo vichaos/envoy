@@ -21,9 +21,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::NiceMock;
 
+namespace Envoy {
 namespace Upstream {
 
 class MockCluster : public Cluster {
@@ -40,8 +40,8 @@ public:
   MOCK_CONST_METHOD1(addMemberUpdateCb, Common::CallbackHandle*(MemberUpdateCb callback));
   MOCK_CONST_METHOD0(hosts, const std::vector<HostSharedPtr>&());
   MOCK_CONST_METHOD0(healthyHosts, const std::vector<HostSharedPtr>&());
-  MOCK_CONST_METHOD0(hostsPerZone, const std::vector<std::vector<HostSharedPtr>>&());
-  MOCK_CONST_METHOD0(healthyHostsPerZone, const std::vector<std::vector<HostSharedPtr>>&());
+  MOCK_CONST_METHOD0(hostsPerLocality, const std::vector<std::vector<HostSharedPtr>>&());
+  MOCK_CONST_METHOD0(healthyHostsPerLocality, const std::vector<std::vector<HostSharedPtr>>&());
 
   // Upstream::Cluster
   MOCK_CONST_METHOD0(info, ClusterInfoConstSharedPtr());
@@ -53,8 +53,8 @@ public:
 
   std::vector<HostSharedPtr> hosts_;
   std::vector<HostSharedPtr> healthy_hosts_;
-  std::vector<std::vector<HostSharedPtr>> hosts_per_zone_;
-  std::vector<std::vector<HostSharedPtr>> healthy_hosts_per_zone_;
+  std::vector<std::vector<HostSharedPtr>> hosts_per_locality_;
+  std::vector<std::vector<HostSharedPtr>> healthy_hosts_per_locality_;
   Common::CallbackManager<const std::vector<HostSharedPtr>&, const std::vector<HostSharedPtr>&>
       member_update_cb_helper_;
   std::shared_ptr<MockClusterInfo> info_{new NiceMock<MockClusterInfo>()};
@@ -114,6 +114,7 @@ public:
   MOCK_METHOD1(removePrimaryCluster, bool(const std::string& cluster));
   MOCK_METHOD0(shutdown, void());
   MOCK_CONST_METHOD0(sourceAddress, const Network::Address::InstanceConstSharedPtr&());
+  MOCK_METHOD0(adsMux, Config::GrpcMux&());
 
   NiceMock<Http::ConnectionPool::MockInstance> conn_pool_;
   NiceMock<Http::MockAsyncClient> async_client_;
@@ -145,6 +146,7 @@ public:
 
   MOCK_METHOD0(initialize, void());
   MOCK_METHOD1(setInitializedCb, void(std::function<void()> callback));
+  MOCK_CONST_METHOD0(versionInfo, const std::string());
 
   std::function<void()> initialized_callback_;
 };

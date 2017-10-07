@@ -5,13 +5,13 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
 using testing::SaveArg;
 using testing::_;
 
+namespace Envoy {
 namespace Router {
 
 MockRedirectEntry::MockRedirectEntry() {}
@@ -20,7 +20,8 @@ MockRedirectEntry::~MockRedirectEntry() {}
 MockRetryState::MockRetryState() {}
 
 void MockRetryState::expectRetry() {
-  EXPECT_CALL(*this, shouldRetry(_, _, _)).WillOnce(DoAll(SaveArg<2>(&callback_), Return(true)));
+  EXPECT_CALL(*this, shouldRetry(_, _, _))
+      .WillOnce(DoAll(SaveArg<2>(&callback_), Return(RetryStatus::Yes)));
 }
 
 MockRetryState::~MockRetryState() {}
@@ -74,7 +75,13 @@ MockConfig::MockConfig() : route_(new NiceMock<MockRoute>()) {
 
 MockConfig::~MockConfig() {}
 
-MockRoute::MockRoute() { ON_CALL(*this, routeEntry()).WillByDefault(Return(&route_entry_)); }
+MockDecorator::MockDecorator() { ON_CALL(*this, operation()).WillByDefault(ReturnRef(operation_)); }
+MockDecorator::~MockDecorator() {}
+
+MockRoute::MockRoute() {
+  ON_CALL(*this, routeEntry()).WillByDefault(Return(&route_entry_));
+  ON_CALL(*this, decorator()).WillByDefault(Return(&decorator_));
+}
 MockRoute::~MockRoute() {}
 
 MockRouteConfigProviderManager::MockRouteConfigProviderManager() {}

@@ -15,13 +15,15 @@
 #include "envoy/http/codec.h"
 
 #include "common/common/empty_string.h"
+#include "common/config/bootstrap_json.h"
+#include "common/json/json_loader.h"
 #include "common/network/address_impl.h"
 #include "common/network/utility.h"
 
 #include "test/test_common/printers.h"
 
+#include "fmt/format.h"
 #include "gtest/gtest.h"
-#include "spdlog/spdlog.h"
 
 using testing::GTEST_FLAG(random_seed);
 
@@ -131,6 +133,13 @@ std::vector<std::string> TestUtility::listFiles(const std::string& path, bool re
   return file_names;
 }
 
+envoy::api::v2::Bootstrap TestUtility::parseBootstrapFromJson(const std::string& json_string) {
+  envoy::api::v2::Bootstrap bootstrap;
+  auto json_object_ptr = Json::Factory::loadFromString(json_string);
+  Config::BootstrapJson::translateBootstrap(*json_object_ptr, bootstrap);
+  return bootstrap;
+}
+
 void ConditionalInitializer::setReady() {
   std::unique_lock<std::mutex> lock(mutex_);
   EXPECT_FALSE(ready_);
@@ -160,6 +169,7 @@ const uint32_t Http2Settings::DEFAULT_HPACK_TABLE_SIZE;
 const uint32_t Http2Settings::DEFAULT_MAX_CONCURRENT_STREAMS;
 const uint32_t Http2Settings::DEFAULT_INITIAL_STREAM_WINDOW_SIZE;
 const uint32_t Http2Settings::DEFAULT_INITIAL_CONNECTION_WINDOW_SIZE;
+const uint32_t Http2Settings::MIN_INITIAL_STREAM_WINDOW_SIZE;
 
 TestHeaderMapImpl::TestHeaderMapImpl() : HeaderMapImpl() {}
 

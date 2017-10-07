@@ -99,13 +99,6 @@ the header value to *true*.
 
 This is a convenience to avoid having to parse and understand XFF.
 
-.. _config_http_conn_man_headers_x-envoy-ip-tags:
-
-x-envoy-ip-tags
----------------
-
-This header is populated by the :ref:`Ip Tagging Filter<config_http_filters_ip_tagging>`. Behavior is under development.
-
 .. _config_http_conn_man_headers_x-forwarded-client-cert:
 
 x-forwarded-client-cert
@@ -113,7 +106,7 @@ x-forwarded-client-cert
 
 *x-forwarded-clinet-cert* (XFCC) is a proxy header which indicates certificate information of part
 or all of the clients or proxies that a request has flowed through, on its way from the client to the
-server. A proxy may choose to sanitize/append/forward the XFCC header before proxying the reqeust.
+server. A proxy may choose to sanitize/append/forward the XFCC header before proxying the request.
 
 The XFCC header value is a comma (",") separated string. Each substring is an XFCC element, which
 holds information added by a single proxy. A proxy can append the current client certificate
@@ -186,6 +179,8 @@ A few very important notes about XFF:
      XFF is parsed to determine if a request is internal. In this scenario, do not forward XFF and
      allow Envoy to generate a new one with a single internal origin IP.
 
+.. _config_http_conn_man_headers_x-forwarded-proto:
+
 x-forwarded-proto
 -----------------
 
@@ -221,12 +216,8 @@ x-ot-span-context
 -----------------
 
 The *x-ot-span-context* HTTP header is used by Envoy to establish proper parent-child relationships
-between tracing spans. For the Lightstep tracer, *x-ot-span-context* is a base64 encoded
-`binary OT <https://github.com/opentracing/basictracer-go/blob/master/wire/wire.proto>`_
-carrier. For the Zipkin tracer, *x-ot-span-context* contains information
-about `client-send`, `server-receive`, `server-send` and `client-receive` annotations.
-In all cases, Envoy relies on data from the *x-ot-span-context* header to extract the parent
-context for the current span. For example, an egress span is a child of an ingress
+between tracing spans. This header can be used with both LightStep and Zipkin tracers.
+For example, an egress span is a child of an ingress
 span (if the ingress span was present). Envoy injects the *x-ot-span-context* header on ingress requests and
 forwards it to the local service. Envoy relies on the application to propagate *x-ot-span-context* on
 the egress call to an upstream. See more on tracing :ref:`here <arch_overview_tracing>`.

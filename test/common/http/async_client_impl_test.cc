@@ -21,7 +21,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::Invoke;
 using testing::NiceMock;
 using testing::Ref;
@@ -30,6 +29,7 @@ using testing::ReturnRef;
 using testing::ReturnRefOfCopy;
 using testing::_;
 
+namespace Envoy {
 namespace Http {
 
 class AsyncClientImplTest : public testing::Test {
@@ -41,7 +41,8 @@ public:
     message_->headers().insertMethod().value(std::string("GET"));
     message_->headers().insertHost().value(std::string("host"));
     message_->headers().insertPath().value(std::string("/"));
-    ON_CALL(*cm_.conn_pool_.host_, zone()).WillByDefault(ReturnRefOfCopy(local_info_.zoneName()));
+    ON_CALL(*cm_.conn_pool_.host_, locality())
+        .WillByDefault(ReturnRef(envoy::api::v2::Locality().default_instance()));
   }
 
   void expectSuccess(uint64_t code) {

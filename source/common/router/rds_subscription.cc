@@ -6,6 +6,8 @@
 #include "common/http/headers.h"
 #include "common/json/json_loader.h"
 
+#include "fmt/format.h"
+
 namespace Envoy {
 namespace Router {
 
@@ -14,9 +16,10 @@ RdsSubscription::RdsSubscription(Envoy::Config::SubscriptionStats stats,
                                  Upstream::ClusterManager& cm, Event::Dispatcher& dispatcher,
                                  Runtime::RandomGenerator& random,
                                  const LocalInfo::LocalInfo& local_info)
-    : RestApiFetcher(
-          cm, rds.config_source().api_config_source().cluster_name()[0], dispatcher, random,
-          Config::Utility::apiConfigSourceRefreshDelay(rds.config_source().api_config_source())),
+    : RestApiFetcher(cm, rds.config_source().api_config_source().cluster_name()[0], dispatcher,
+                     random,
+                     Envoy::Config::Utility::apiConfigSourceRefreshDelay(
+                         rds.config_source().api_config_source())),
       local_info_(local_info), stats_(stats) {
   const auto& api_config_source = rds.config_source().api_config_source();
   UNREFERENCED_PARAMETER(api_config_source);
@@ -40,11 +43,16 @@ void RdsSubscription::createRequest(Http::Message& request) {
 
 void RdsSubscription::parseResponse(const Http::Message& response) {
   ENVOY_LOG(debug, "rds: parsing response");
-  Json::ObjectSharedPtr response_json = Json::Factory::loadFromString(response.bodyAsString());
+  const std::string response_body = response.bodyAsString();
+  Json::ObjectSharedPtr response_json = Json::Factory::loadFromString(response_body);
   Protobuf::RepeatedPtrField<envoy::api::v2::RouteConfiguration> resources;
   Envoy::Config::RdsJson::translateRouteConfiguration(*response_json, *resources.Add());
   resources[0].set_name(route_config_name_);
   callbacks_->onConfigUpdate(resources);
+  std::pair<std::string, uint64_t> hash =
+      Envoy::Config::Utility::computeHashedVersion(response_body);
+  version_info_ = hash.first;
+  stats_.version_.set(hash.second);
   stats_.update_success_.inc();
 }
 

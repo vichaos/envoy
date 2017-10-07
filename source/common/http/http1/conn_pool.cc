@@ -129,7 +129,7 @@ void ConnPoolImpl::onConnectionEvent(ActiveClient& client, Network::ConnectionEv
       host_->stats().cx_connect_fail_.inc();
       removed = client.removeFromList(busy_clients_);
 
-      // Raw connect falures should never happen under normal circumstances. If we have an upstream
+      // Raw connect failures should never happen under normal circumstances. If we have an upstream
       // that is behaving badly, requests can get stuck here in the pending state. If we see a
       // connect failure, we purge all pending requests so that calling code can determine what to
       // do with the request.
@@ -155,14 +155,20 @@ void ConnPoolImpl::onConnectionEvent(ActiveClient& client, Network::ConnectionEv
     if (check_for_drained) {
       checkForDrained();
     }
-  } else if (event == Network::ConnectionEvent::Connected) {
-    conn_connect_ms_->complete();
-    processIdleClient(client);
   }
 
   if (client.connect_timer_) {
     client.connect_timer_->disableTimer();
     client.connect_timer_.reset();
+  }
+
+  // Note that the order in this function is important. Concretely, we must destroy the connect
+  // timer before we process a connected idle client, because if this results in an immediate
+  // drain/destruction event, we key off of the existence of the connect timer above to determine
+  // whether the client is in the ready list (connected) or the busy list (failed to connect).
+  if (event == Network::ConnectionEvent::Connected) {
+    conn_connect_ms_->complete();
+    processIdleClient(client);
   }
 }
 
@@ -265,8 +271,8 @@ ConnPoolImpl::ActiveClient::ActiveClient(ConnPoolImpl& parent)
       connect_timer_(parent_.dispatcher_.createTimer([this]() -> void { onConnectTimeout(); })),
       remaining_requests_(parent_.host_->cluster().maxRequestsPerConnection()) {
 
-  parent_.conn_connect_ms_ =
-      parent_.host_->cluster().stats().upstream_cx_connect_ms_.allocateSpan();
+  parent_.conn_connect_ms_.reset(
+      new Stats::Timespan(parent_.host_->cluster().stats().upstream_cx_connect_ms_));
   Upstream::Host::CreateConnectionData data = parent_.host_->createConnection(parent_.dispatcher_);
   real_host_description_ = data.host_description_;
   codec_client_ = parent_.createCodecClient(data);
@@ -277,14 +283,16 @@ ConnPoolImpl::ActiveClient::ActiveClient(ConnPoolImpl& parent)
   parent_.host_->cluster().stats().upstream_cx_http1_total_.inc();
   parent_.host_->stats().cx_total_.inc();
   parent_.host_->stats().cx_active_.inc();
-  conn_length_ = parent_.host_->cluster().stats().upstream_cx_length_ms_.allocateSpan();
+  conn_length_.reset(new Stats::Timespan(parent_.host_->cluster().stats().upstream_cx_length_ms_));
   connect_timer_->enableTimer(parent_.host_->cluster().connectTimeout());
   parent_.host_->cluster().resourceManager(parent_.priority_).connections().inc();
 
-  codec_client_->setBufferStats({parent_.host_->cluster().stats().upstream_cx_rx_bytes_total_,
-                                 parent_.host_->cluster().stats().upstream_cx_rx_bytes_buffered_,
-                                 parent_.host_->cluster().stats().upstream_cx_tx_bytes_total_,
-                                 parent_.host_->cluster().stats().upstream_cx_tx_bytes_buffered_});
+  codec_client_->setConnectionStats(
+      {parent_.host_->cluster().stats().upstream_cx_rx_bytes_total_,
+       parent_.host_->cluster().stats().upstream_cx_rx_bytes_buffered_,
+       parent_.host_->cluster().stats().upstream_cx_tx_bytes_total_,
+       parent_.host_->cluster().stats().upstream_cx_tx_bytes_buffered_,
+       &parent_.host_->cluster().stats().bind_errors_});
 }
 
 ConnPoolImpl::ActiveClient::~ActiveClient() {

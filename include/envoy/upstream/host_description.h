@@ -5,13 +5,19 @@
 
 #include "envoy/network/address.h"
 #include "envoy/stats/stats_macros.h"
+#include "envoy/upstream/health_check_host_monitor.h"
 #include "envoy/upstream/outlier_detection.h"
+
+#include "api/base.pb.h"
 
 namespace Envoy {
 namespace Upstream {
 
 /**
  * All per host stats. @see stats_macros.h
+ *
+ * {rq_success, rq_error} have specific semantics driven by the needs of EDS load reporting. See
+ * envoy.api.v2.UpstreamLocalityStats for the definitions of success/error.
  */
 // clang-format off
 #define ALL_HOST_STATS(COUNTER, GAUGE)                                                             \
@@ -20,6 +26,8 @@ namespace Upstream {
   COUNTER(cx_connect_fail)                                                                         \
   COUNTER(rq_total)                                                                                \
   COUNTER(rq_timeout)                                                                              \
+  COUNTER(rq_success)                                                                              \
+  COUNTER(rq_error)                                                                                \
   GAUGE  (rq_active)
 // clang-format on
 
@@ -45,14 +53,24 @@ public:
   virtual bool canary() const PURE;
 
   /**
+   * @return the metadata associated with this host
+   */
+  virtual const envoy::api::v2::Metadata& metadata() const PURE;
+
+  /**
    * @return the cluster the host is a member of.
    */
   virtual const ClusterInfo& cluster() const PURE;
 
   /**
-   * @return the host's outlier detection sink.
+   * @return the host's outlier detection monitor.
    */
-  virtual Outlier::DetectorHostSink& outlierDetector() const PURE;
+  virtual Outlier::DetectorHostMonitor& outlierDetector() const PURE;
+
+  /**
+   * @return the host's health checker monitor.
+   */
+  virtual HealthCheckHostMonitor& healthChecker() const PURE;
 
   /**
    * @return the hostname associated with the host if any.
@@ -71,9 +89,10 @@ public:
   virtual const HostStats& stats() const PURE;
 
   /**
-   * @return the "zone" of the host (deployment specific). Empty is unknown.
+   * @return the locality of the host (deployment specific). This will be the default instance if
+   *         unknown.
    */
-  virtual const std::string& zone() const PURE;
+  virtual const envoy::api::v2::Locality& locality() const PURE;
 };
 
 typedef std::shared_ptr<const HostDescription> HostDescriptionConstSharedPtr;

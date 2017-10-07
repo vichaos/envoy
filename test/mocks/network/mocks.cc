@@ -12,7 +12,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::Invoke;
 using testing::Return;
 using testing::ReturnPointee;
@@ -20,6 +19,7 @@ using testing::ReturnRef;
 using testing::SaveArg;
 using testing::_;
 
+namespace Envoy {
 namespace Network {
 
 MockConnectionCallbacks::MockConnectionCallbacks() {}
@@ -39,6 +39,18 @@ void MockConnectionBase::raiseEvent(Network::ConnectionEvent event) {
 
   for (Network::ConnectionCallbacks* callbacks : callbacks_) {
     callbacks->onEvent(event);
+  }
+}
+
+void MockConnectionBase::runHighWatermarkCallbacks() {
+  for (auto* callback : callbacks_) {
+    callback->onAboveWriteBufferHighWatermark();
+  }
+}
+
+void MockConnectionBase::runLowWatermarkCallbacks() {
+  for (auto* callback : callbacks_) {
+    callback->onBelowWriteBufferLowWatermark();
   }
 }
 

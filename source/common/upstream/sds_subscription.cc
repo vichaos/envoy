@@ -8,6 +8,7 @@
 
 #include "common/config/metadata.h"
 #include "common/config/utility.h"
+#include "common/config/well_known_names.h"
 #include "common/http/headers.h"
 #include "common/json/config_schemas.h"
 #include "common/json/json_loader.h"
@@ -34,7 +35,8 @@ SdsSubscription::SdsSubscription(ClusterStats& stats,
 }
 
 void SdsSubscription::parseResponse(const Http::Message& response) {
-  Json::ObjectSharedPtr json = Json::Factory::loadFromString(response.bodyAsString());
+  const std::string response_body = response.bodyAsString();
+  Json::ObjectSharedPtr json = Json::Factory::loadFromString(response_body);
   json->validateSchema(Json::Schema::SDS_SCHEMA);
 
   // Since in the v2 EDS API we place all the endpoints for a given zone in the same proto, we first
@@ -71,6 +73,10 @@ void SdsSubscription::parseResponse(const Http::Message& response) {
   }
 
   callbacks_->onConfigUpdate(resources);
+  std::pair<std::string, uint64_t> hash =
+      Envoy::Config::Utility::computeHashedVersion(response_body);
+  version_info_ = hash.first;
+  stats_.version_.set(hash.second);
   stats_.update_success_.inc();
 }
 

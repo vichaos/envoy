@@ -87,6 +87,7 @@ public:
 
   void updateResources(const std::vector<std::string>& cluster_names) override {
     cluster_names_ = cluster_names;
+    expectSendMessage(cluster_names, version_);
     subscription_->updateResources(cluster_names);
     timer_cb_();
   }
@@ -120,6 +121,7 @@ public:
     if (accept) {
       version_ = version;
     }
+    EXPECT_EQ(version_, subscription_->versionInfo());
     request_in_progress_ = false;
     timerTick();
   }

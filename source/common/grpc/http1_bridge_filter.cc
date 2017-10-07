@@ -22,7 +22,8 @@ void Http1BridgeFilter::chargeStat(const Http::HeaderMap& headers) {
 
 Http::FilterHeadersStatus Http1BridgeFilter::decodeHeaders(Http::HeaderMap& headers, bool) {
   const Http::HeaderEntry* content_type = headers.ContentType();
-  bool grpc_request = content_type && content_type->value() == Common::GRPC_CONTENT_TYPE.c_str();
+  const bool grpc_request =
+      content_type && content_type->value() == Http::Headers::get().ContentTypeValues.Grpc.c_str();
   if (grpc_request) {
     setupStatTracking(headers);
   }
@@ -52,6 +53,7 @@ Http::FilterDataStatus Http1BridgeFilter::encodeData(Buffer::Instance&, bool end
   if (!do_bridging_ || end_stream) {
     return Http::FilterDataStatus::Continue;
   } else {
+    // Buffer until the complete request has been processed.
     return Http::FilterDataStatus::StopIterationAndBuffer;
   }
 }

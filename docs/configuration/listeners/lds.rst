@@ -26,12 +26,12 @@ The semantics of listener updates are as follows:
 .. code-block:: json
 
   {
-    "cluster": "{...}",
+    "cluster": "...",
     "refresh_delay_ms": "..."
   }
 
 cluster
-  *(required, object)* The name of an upstream :ref:`cluster <config_cluster_manager_cluster>` that
+  *(required, string)* The name of an upstream :ref:`cluster <config_cluster_manager_cluster>` that
   hosts the listener discovery service. The cluster must run a REST service that implements the
   :ref:`LDS HTTP API <config_listeners_lds_api>`. NOTE: This is the *name* of a cluster defined
   in the :ref:`cluster manager <config_cluster_manager>` configuration, not the full definition of
@@ -77,6 +77,8 @@ LDS has a statistics tree rooted at *listener_manager.lds.* with the following s
   :header: Name, Type, Description
   :widths: 1, 1, 2
 
+  config_reload, Counter, Total API fetches that resulted in a config reload due to a different config
   update_attempt, Counter, Total API fetches attempted
   update_success, Counter, Total API fetches completed successfully
   update_failure, Counter, Total API fetches that failed (either network or schema errors)
+  version, Gauge, Hash of the contents from the last successful API fetch

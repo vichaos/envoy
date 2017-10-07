@@ -15,8 +15,11 @@
 #include "common/http/codes.h"
 #include "common/http/header_map_impl.h"
 #include "common/http/headers.h"
+#include "common/http/utility.h"
 #include "common/json/config_schemas.h"
 #include "common/router/config_impl.h"
+
+#include "fmt/format.h"
 
 namespace Envoy {
 namespace Http {
@@ -169,7 +172,7 @@ Optional<uint64_t> FaultFilter::delayDuration() {
   return ret;
 }
 
-std::string FaultFilter::abortHttpStatus() {
+uint64_t FaultFilter::abortHttpStatus() {
   // TODO(mattklein123): check http status codes obtained from runtime.
   uint64_t http_status =
       config_->runtime().snapshot().getInteger(ABORT_HTTP_STATUS_KEY, config_->abortCode());
@@ -179,7 +182,7 @@ std::string FaultFilter::abortHttpStatus() {
         downstream_cluster_abort_http_status_key_, http_status);
   }
 
-  return std::to_string(http_status);
+  return http_status;
 }
 
 void FaultFilter::recordDelaysInjectedStats() {
@@ -209,8 +212,11 @@ void FaultFilter::recordAbortsInjectedStats() {
 }
 
 FilterDataStatus FaultFilter::decodeData(Buffer::Instance&, bool) {
-  return delay_timer_ == nullptr ? FilterDataStatus::Continue
-                                 : FilterDataStatus::StopIterationAndBuffer;
+  if (delay_timer_ == nullptr) {
+    return FilterDataStatus::Continue;
+  }
+  // If the request is too large, stop reading new data until the buffer drains.
+  return FilterDataStatus::StopIterationAndWatermark;
 }
 
 FilterTrailersStatus FaultFilter::decodeTrailers(HeaderMap&) {
@@ -223,7 +229,10 @@ FaultFilterStats FaultFilterConfig::generateStats(const std::string& prefix, Sta
   return {ALL_FAULT_FILTER_STATS(POOL_COUNTER_PREFIX(scope, final_prefix))};
 }
 
-void FaultFilter::onDestroy() { resetTimerState(); }
+void FaultFilter::onDestroy() {
+  resetTimerState();
+  stream_destroyed_ = true;
+}
 
 void FaultFilter::postDelayInjection() {
   resetTimerState();
@@ -238,12 +247,10 @@ void FaultFilter::postDelayInjection() {
 }
 
 void FaultFilter::abortWithHTTPStatus() {
-  // TODO(htuch): Switch this to Utility::sendLocalReply().
-  Http::HeaderMapPtr response_headers{
-      new HeaderMapImpl{{Headers::get().Status, abortHttpStatus()}}};
-  callbacks_->encodeHeaders(std::move(response_headers), true);
-  recordAbortsInjectedStats();
   callbacks_->requestInfo().setResponseFlag(Http::AccessLog::ResponseFlag::FaultInjected);
+  Http::Utility::sendLocalReply(*callbacks_, stream_destroyed_,
+                                static_cast<Http::Code>(abortHttpStatus()), "fault filter abort");
+  recordAbortsInjectedStats();
 }
 
 bool FaultFilter::matchesTargetUpstreamCluster() {

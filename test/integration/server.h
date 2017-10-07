@@ -27,22 +27,21 @@ namespace Server {
  */
 class TestOptionsImpl : public Options {
 public:
-  TestOptionsImpl(const std::string& config_path, const std::string& bootstrap_path,
-                  Network::Address::IpVersion ip_version)
-      : config_path_(config_path), bootstrap_path_(bootstrap_path),
-        local_address_ip_version_(ip_version), service_cluster_name_("cluster_name"),
-        service_node_name_("node_name"), service_zone_("zone_name") {}
+  TestOptionsImpl(const std::string& config_path, Network::Address::IpVersion ip_version)
+      : config_path_(config_path), local_address_ip_version_(ip_version),
+        service_cluster_name_("cluster_name"), service_node_name_("node_name"),
+        service_zone_("zone_name") {}
 
   // Server::Options
   uint64_t baseId() override { return 0; }
   uint32_t concurrency() override { return 1; }
   const std::string& configPath() override { return config_path_; }
-  const std::string& bootstrapPath() override { return bootstrap_path_; }
   const std::string& adminAddressPath() override { return admin_address_path_; }
   Network::Address::IpVersion localAddressIpVersion() override { return local_address_ip_version_; }
   std::chrono::seconds drainTime() override { return std::chrono::seconds(1); }
   spdlog::level::level_enum logLevel() override { NOT_IMPLEMENTED; }
   std::chrono::seconds parentShutdownTime() override { return std::chrono::seconds(2); }
+  const std::string& logPath() override { return log_path_; }
   uint64_t restartEpoch() override { return 0; }
   std::chrono::milliseconds fileFlushIntervalMsec() override {
     return std::chrono::milliseconds(10000);
@@ -51,15 +50,17 @@ public:
   const std::string& serviceClusterName() override { return service_cluster_name_; }
   const std::string& serviceNodeName() override { return service_node_name_; }
   const std::string& serviceZone() override { return service_zone_; }
+  uint64_t maxStats() override { return 16384; }
+  uint64_t maxStatNameLength() override { return 127; }
 
 private:
   const std::string config_path_;
-  const std::string bootstrap_path_;
   const std::string admin_address_path_;
   const Network::Address::IpVersion local_address_ip_version_;
   const std::string service_cluster_name_;
   const std::string service_node_name_;
   const std::string service_zone_;
+  const std::string log_path_;
 };
 
 class TestDrainManager : public DrainManager {
@@ -101,14 +102,9 @@ public:
     return ScopePtr{new TestScopeWrapper(lock_, wrapped_scope_->createScope(name))};
   }
 
-  void deliverHistogramToSinks(const std::string& name, uint64_t value) override {
+  void deliverHistogramToSinks(const Histogram& histogram, uint64_t value) override {
     std::unique_lock<std::mutex> lock(lock_);
-    wrapped_scope_->deliverHistogramToSinks(name, value);
-  }
-
-  void deliverTimingToSinks(const std::string& name, std::chrono::milliseconds ms) override {
-    std::unique_lock<std::mutex> lock(lock_);
-    wrapped_scope_->deliverTimingToSinks(name, ms);
+    wrapped_scope_->deliverHistogramToSinks(histogram, value);
   }
 
   Counter& counter(const std::string& name) override {
@@ -121,9 +117,9 @@ public:
     return wrapped_scope_->gauge(name);
   }
 
-  Timer& timer(const std::string& name) override {
+  Histogram& histogram(const std::string& name) override {
     std::unique_lock<std::mutex> lock(lock_);
-    return wrapped_scope_->timer(name);
+    return wrapped_scope_->histogram(name);
   }
 
 private:
@@ -146,15 +142,14 @@ public:
     std::unique_lock<std::mutex> lock(lock_);
     return ScopePtr{new TestScopeWrapper(lock_, store_.createScope(name))};
   }
-  void deliverHistogramToSinks(const std::string&, uint64_t) override {}
-  void deliverTimingToSinks(const std::string&, std::chrono::milliseconds) override {}
+  void deliverHistogramToSinks(const Histogram&, uint64_t) override {}
   Gauge& gauge(const std::string& name) override {
     std::unique_lock<std::mutex> lock(lock_);
     return store_.gauge(name);
   }
-  Timer& timer(const std::string& name) override {
+  Histogram& histogram(const std::string& name) override {
     std::unique_lock<std::mutex> lock(lock_);
-    return store_.timer(name);
+    return store_.histogram(name);
   }
 
   // Stats::Store
@@ -190,7 +185,6 @@ class IntegrationTestServer : Logger::Loggable<Logger::Id::testing>,
                               public Server::ComponentFactory {
 public:
   static IntegrationTestServerPtr create(const std::string& config_path,
-                                         const std::string& bootstrap_path,
                                          const Network::Address::IpVersion version);
   ~IntegrationTestServer();
 
@@ -247,8 +241,7 @@ public:
   }
 
 protected:
-  IntegrationTestServer(const std::string& config_path, const std::string& bootstrap_path)
-      : config_path_(config_path), bootstrap_path_(bootstrap_path) {}
+  IntegrationTestServer(const std::string& config_path) : config_path_(config_path) {}
 
 private:
   /**
@@ -257,7 +250,6 @@ private:
   void threadRoutine(const Network::Address::IpVersion version);
 
   const std::string config_path_;
-  const std::string bootstrap_path_;
   Thread::ThreadPtr thread_;
   std::condition_variable listeners_cv_;
   std::mutex listeners_mutex_;

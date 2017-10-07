@@ -63,8 +63,8 @@ def envoy_test_linkopts():
         "@bazel_tools//tools/osx:darwin": [],
 
         # TODO(mattklein123): It's not great that we universally link against the following libs.
-        # In particular, -latomic is not needed on all platforms. Make this more granular.
-        "//conditions:default": ["-pthread", "-latomic"],
+        # In particular, -latomic and -lrt are not needed on all platforms. Make this more granular.
+        "//conditions:default": ["-pthread", "-latomic", "-lrt"],
     })
 
 # References to Envoy external dependencies should be wrapped with this function.
@@ -127,6 +127,7 @@ def envoy_cc_library(name,
         deps = deps + [envoy_external_dep_path(dep) for dep in external_deps] + [
             repository + "//include/envoy/common:base_includes",
             envoy_external_dep_path('spdlog'),
+            envoy_external_dep_path('fmtlib'),
         ],
         include_prefix = envoy_include_prefix(PACKAGE_NAME),
         alwayslink = 1,
@@ -188,6 +189,7 @@ def envoy_cc_test(name,
                   external_deps = [],
                   deps = [],
                   tags = [],
+                  args = [],
                   coverage = True,
                   local = False):
     test_lib_tags = []
@@ -212,6 +214,9 @@ def envoy_cc_test(name,
             ":" + name + "_lib",
             repository + "//test:main"
         ],
+        # from https://github.com/google/googletest/blob/6e1970e2376c14bf658eb88f655a054030353f9f/googlemock/src/gmock.cc#L51
+        # 2 - by default, mocks act as StrictMocks.
+        args = args + ["--gmock_default_mock_behavior=2"],
         tags = tags + ["coverage_test"],
         local = local,
     )

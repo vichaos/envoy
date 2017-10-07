@@ -15,6 +15,14 @@ namespace Http {
 class HeaderValues {
 public:
   const LowerCaseString Accept{"accept"};
+  const LowerCaseString AccessControlRequestHeaders{"access-control-request-headers"};
+  const LowerCaseString AccessControlRequestMethod{"access-control-request-method"};
+  const LowerCaseString AccessControlAllowOrigin{"access-control-allow-origin"};
+  const LowerCaseString AccessControlAllowHeaders{"access-control-allow-headers"};
+  const LowerCaseString AccessControlAllowMethods{"access-control-allow-methods"};
+  const LowerCaseString AccessControlExposeHeaders{"access-control-expose-headers"};
+  const LowerCaseString AccessControlMaxAge{"access-control-max-age"};
+  const LowerCaseString AccessControlAllowCredentials{"access-control-allow-credentials"};
   const LowerCaseString Authorization{"authorization"};
   const LowerCaseString ClientTraceId{"x-client-trace-id"};
   const LowerCaseString Connection{"connection"};
@@ -26,9 +34,11 @@ public:
   const LowerCaseString EnvoyDownstreamServiceNode{"x-envoy-downstream-service-node"};
   const LowerCaseString EnvoyExternalAddress{"x-envoy-external-address"};
   const LowerCaseString EnvoyForceTrace{"x-envoy-force-trace"};
+  const LowerCaseString EnvoyImmediateHealthCheckFail{"x-envoy-immediate-health-check-fail"};
   const LowerCaseString EnvoyInternalRequest{"x-envoy-internal"};
   const LowerCaseString EnvoyMaxRetries{"x-envoy-max-retries"};
   const LowerCaseString EnvoyOriginalPath{"x-envoy-original-path"};
+  const LowerCaseString EnvoyOverloaded{"x-envoy-overloaded"};
   const LowerCaseString EnvoyRetryOn{"x-envoy-retry-on"};
   const LowerCaseString EnvoyRetryGrpcOn{"x-envoy-retry-grpc-on"};
   const LowerCaseString EnvoyUpstreamAltStatName{"x-envoy-upstream-alt-stat-name"};
@@ -53,6 +63,7 @@ public:
   const LowerCaseString KeepAlive{"keep-alive"};
   const LowerCaseString Location{"location"};
   const LowerCaseString Method{":method"};
+  const LowerCaseString Origin{"origin"};
   const LowerCaseString OtSpanContext{"x-ot-span-context"};
   const LowerCaseString Path{":path"};
   const LowerCaseString ProxyConnection{"proxy-connection"};
@@ -91,7 +102,15 @@ public:
 
   struct {
     const std::string True{"true"};
+  } EnvoyImmediateHealthCheckFailValues;
+
+  struct {
+    const std::string True{"true"};
   } EnvoyInternalRequestValues;
+
+  struct {
+    const std::string True{"true"};
+  } EnvoyOverloadedValues;
 
   struct {
     const std::string _5xx{"5xx"};
@@ -114,6 +133,7 @@ public:
     const std::string Get{"GET"};
     const std::string Head{"HEAD"};
     const std::string Post{"POST"};
+    const std::string Options{"OPTIONS"};
   } MethodValues;
 
   struct {
@@ -136,6 +156,10 @@ public:
   struct {
     const std::string Trailers{"trailers"};
   } TEValues;
+
+  struct {
+    const std::string True{"true"};
+  } CORSValues;
 };
 
 typedef ConstSingleton<HeaderValues> Headers;

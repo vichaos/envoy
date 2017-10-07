@@ -2,9 +2,11 @@
 
 #include <string>
 
+#include "common/common/macros.h"
+
 namespace Envoy {
 const std::string& Json::ToolSchema::routerCheckSchema() {
-  static const std::string* router_check_schema = new std::string(R"EOF(
+  CONSTRUCT_ON_FIRST_USE(std::string, R"EOF(
   {
     "$schema": "http://json-schema.org/schema#",
       "type": "array",
@@ -60,6 +62,19 @@ const std::string& Json::ToolSchema::routerCheckSchema() {
                  "required": ["field", "value"],
                  "maxProperties": 2
                 }
+              },
+              "custom_header_fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {"type": "string"},
+                    "value": {"type": "string"}
+                  },
+                 "additionalProperties": false,
+                 "required": ["field", "value"],
+                 "maxProperties": 2
+                }
               }
             },
             "minProperties": 1,
@@ -71,7 +86,5 @@ const std::string& Json::ToolSchema::routerCheckSchema() {
       }
     }
   )EOF");
-
-  return *router_check_schema;
 }
 } // namespace Envoy

@@ -18,13 +18,13 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace Envoy {
 using testing::InSequence;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
 using testing::_;
 
+namespace Envoy {
 namespace Http {
 
 class ConnectionManagerUtilityTest : public testing::Test {
@@ -326,6 +326,8 @@ TEST_F(ConnectionManagerUtilityTest, ExternalAddressExternalRequestUseRemote) {
 
   TestHeaderMapImpl headers{{"x-envoy-downstream-service-cluster", "foo"},
                             {"x-envoy-retry-on", "foo"},
+                            {"x-envoy-retry-grpc-on", "foo"},
+                            {"x-envoy-max-retries", "foo"},
                             {"x-envoy-upstream-alt-stat-name", "foo"},
                             {"x-envoy-upstream-rq-timeout-alt-response", "204"},
                             {"x-envoy-upstream-rq-timeout-ms", "foo"},
@@ -337,6 +339,8 @@ TEST_F(ConnectionManagerUtilityTest, ExternalAddressExternalRequestUseRemote) {
   EXPECT_FALSE(headers.has("x-envoy-internal"));
   EXPECT_FALSE(headers.has("x-envoy-downstream-service-cluster"));
   EXPECT_FALSE(headers.has("x-envoy-retry-on"));
+  EXPECT_FALSE(headers.has("x-envoy-retry-grpc-on"));
+  EXPECT_FALSE(headers.has("x-envoy-max-retries"));
   EXPECT_FALSE(headers.has("x-envoy-upstream-alt-stat-name"));
   EXPECT_FALSE(headers.has("x-envoy-upstream-rq-timeout-alt-response"));
   EXPECT_FALSE(headers.has("x-envoy-upstream-rq-timeout-ms"));

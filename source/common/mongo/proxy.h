@@ -8,6 +8,7 @@
 
 #include "envoy/access_log/access_log.h"
 #include "envoy/common/time.h"
+#include "envoy/event/timer.h"
 #include "envoy/mongo/codec.h"
 #include "envoy/network/connection.h"
 #include "envoy/network/filter.h"
@@ -17,18 +18,32 @@
 
 #include "common/buffer/buffer_impl.h"
 #include "common/common/logger.h"
+#include "common/common/singleton.h"
+#include "common/json/json_loader.h"
 #include "common/mongo/utility.h"
 #include "common/network/filter_impl.h"
 
 namespace Envoy {
 namespace Mongo {
 
+class MongoRuntimeConfigKeys {
+public:
+  const std::string FixedDelayPercent{"mongo.fault.fixed_delay.percent"};
+  const std::string FixedDelayDurationMs{"mongo.fault.fixed_delay.duration_ms"};
+  const std::string LoggingEnabled{"mongo.logging_enabled"};
+  const std::string ProxyEnabled{"mongo.proxy_enabled"};
+  const std::string ConnectionLoggingEnabled{"mongo.connection_logging_enabled"};
+};
+
+typedef ConstSingleton<MongoRuntimeConfigKeys> MongoRuntimeConfig;
+
 /**
  * All mongo proxy stats. @see stats_macros.h
  */
 // clang-format off
-#define ALL_MONGO_PROXY_STATS(COUNTER, GAUGE, TIMER)                                               \
+#define ALL_MONGO_PROXY_STATS(COUNTER, GAUGE, HISTOGRAM)                                           \
   COUNTER(decoding_error)                                                                          \
+  COUNTER(delays_injected)                                                                         \
   COUNTER(op_get_more)                                                                             \
   COUNTER(op_insert)                                                                               \
   COUNTER(op_kill_cursors)                                                                         \
@@ -53,7 +68,7 @@ namespace Mongo {
  * Struct definition for all mongo proxy stats. @see stats_macros.h
  */
 struct MongoProxyStats {
-  ALL_MONGO_PROXY_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT, GENERATE_TIMER_STRUCT)
+  ALL_MONGO_PROXY_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT, GENERATE_HISTOGRAM_STRUCT)
 };
 
 /**
@@ -73,6 +88,27 @@ private:
 typedef std::shared_ptr<AccessLog> AccessLogSharedPtr;
 
 /**
+ * Mongo fault configuration.
+ */
+class FaultConfig {
+public:
+  FaultConfig(const Json::Object& fault_config)
+      : delay_percent_(
+            static_cast<uint32_t>(fault_config.getObject("fixed_delay")->getInteger("percent"))),
+        duration_ms_(static_cast<uint64_t>(
+            fault_config.getObject("fixed_delay")->getInteger("duration_ms"))) {}
+
+  uint32_t delayPercent() const { return delay_percent_; }
+  uint64_t delayDuration() const { return duration_ms_; }
+
+private:
+  const uint32_t delay_percent_;
+  const uint64_t duration_ms_;
+};
+
+typedef std::shared_ptr<const FaultConfig> FaultConfigSharedPtr;
+
+/**
  * A sniffing filter for mongo traffic. The current implementation makes a copy of read/written
  * data, decodes it, and generates stats.
  */
@@ -82,7 +118,7 @@ class ProxyFilter : public Network::Filter,
                     Logger::Loggable<Logger::Id::mongo> {
 public:
   ProxyFilter(const std::string& stat_prefix, Stats::Scope& scope, Runtime::Loader& runtime,
-              AccessLogSharedPtr access_log);
+              AccessLogSharedPtr access_log, const FaultConfigSharedPtr& fault_config);
   ~ProxyFilter();
 
   virtual DecoderPtr createDecoder(DecoderCallbacks& callbacks) PURE;
@@ -129,7 +165,7 @@ private:
   MongoProxyStats generateStats(const std::string& prefix, Stats::Scope& scope) {
     return MongoProxyStats{ALL_MONGO_PROXY_STATS(POOL_COUNTER_PREFIX(scope, prefix),
                                                  POOL_GAUGE_PREFIX(scope, prefix),
-                                                 POOL_TIMER_PREFIX(scope, prefix))};
+                                                 POOL_HISTOGRAM_PREFIX(scope, prefix))};
   }
 
   void chargeQueryStats(const std::string& prefix, QueryMessageInfo::QueryType query_type);
@@ -137,6 +173,10 @@ private:
                         const ReplyMessage& message);
   void doDecode(Buffer::Instance& buffer);
   void logMessage(Message& message, bool full);
+
+  Optional<uint64_t> delayDuration();
+  void delayInjectionTimerCallback();
+  void tryInjectDelay();
 
   std::unique_ptr<Decoder> decoder_;
   std::string stat_prefix_;
@@ -149,6 +189,8 @@ private:
   std::list<ActiveQueryPtr> active_query_list_;
   AccessLogSharedPtr access_log_;
   Network::ReadFilterCallbacks* read_callbacks_{};
+  const FaultConfigSharedPtr fault_config_;
+  Event::TimerPtr delay_timer_;
 };
 
 class ProdProxyFilter : public ProxyFilter {
@@ -159,5 +201,5 @@ public:
   DecoderPtr createDecoder(DecoderCallbacks& callbacks) override;
 };
 
-} // Mongo
+} // namespace Mongo
 } // namespace Envoy

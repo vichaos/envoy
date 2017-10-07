@@ -12,6 +12,7 @@
 #include "envoy/upstream/resource_manager.h"
 
 #include "common/common/logger.h"
+#include "common/common/macros.h"
 #include "common/http/conn_manager_impl.h"
 #include "common/http/date_provider_impl.h"
 #include "common/http/utility.h"
@@ -77,6 +78,7 @@ public:
   const Network::Address::Instance& localAddress() override;
   const Optional<std::string>& userAgent() override { return user_agent_; }
   const Http::TracingConnectionManagerConfig* tracingConfig() override { return nullptr; }
+  Http::ConnectionManagerListenerStats& listenerStats() override { return listener_stats_; }
 
 private:
   /**
@@ -97,6 +99,7 @@ private:
 
     // Router::RouteConfigProvider
     Router::ConfigConstSharedPtr config() override { return config_; }
+    const std::string versionInfo() const override { CONSTRUCT_ON_FIRST_USE(std::string, ""); }
 
     Router::ConfigConstSharedPtr config_;
   };
@@ -141,6 +144,7 @@ private:
   Optional<std::string> user_agent_;
   Http::SlowDateProviderImpl date_provider_;
   std::vector<Http::ClientCertDetailsType> set_current_client_cert_details_;
+  Http::ConnectionManagerListenerStats listener_stats_;
 };
 
 /**

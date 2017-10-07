@@ -14,6 +14,7 @@
 #include "common/common/assert.h"
 #include "common/common/compiler_requirements.h"
 #include "common/common/logger.h"
+#include "common/common/macros.h"
 #include "common/common/utility.h"
 
 #include "server/options_impl.h"
@@ -86,23 +87,21 @@ std::vector<Network::Address::IpVersion> TestEnvironment::getIpVersionsForTest()
 }
 
 Server::Options& TestEnvironment::getOptions() {
-  static OptionsImpl* options = new OptionsImpl(argc_, argv_, "1", spdlog::level::err);
+  static OptionsImpl* options =
+      new OptionsImpl(argc_, argv_, [](uint64_t, uint64_t) { return "1"; }, spdlog::level::err);
   return *options;
 }
 
 const std::string& TestEnvironment::temporaryDirectory() {
-  static const std::string* temporary_directory = new std::string(getCheckedEnvVar("TEST_TMPDIR"));
-  return *temporary_directory;
+  CONSTRUCT_ON_FIRST_USE(std::string, getCheckedEnvVar("TEST_TMPDIR"));
 }
 
 const std::string& TestEnvironment::runfilesDirectory() {
-  static const std::string* runfiles_directory = new std::string(getCheckedEnvVar("TEST_RUNDIR"));
-  return *runfiles_directory;
+  CONSTRUCT_ON_FIRST_USE(std::string, getCheckedEnvVar("TEST_RUNDIR"));
 }
 
 const std::string TestEnvironment::unixDomainSocketDirectory() {
-  static const std::string* uds_directory = new std::string(getOrCreateUnixDomainSocketDirectory());
-  return *uds_directory;
+  CONSTRUCT_ON_FIRST_USE(std::string, getOrCreateUnixDomainSocketDirectory());
 }
 
 std::string TestEnvironment::substitute(const std::string& str,
@@ -151,11 +150,6 @@ std::string TestEnvironment::temporaryFileSubstitute(const std::string& path,
                                                      const ParamMap& param_map,
                                                      const PortMap& port_map,
                                                      Network::Address::IpVersion version) {
-  // Protobufs should be generated dynamically so not need port substitution.
-  if (path.size() > 3 && path.substr(path.size() - 3) == ".pb") {
-    return path;
-  }
-
   // Load the entire file as a string, regex replace one at a time and write it back out. Proper
   // templating might be better one day, but this works for now.
   const std::string json_path = TestEnvironment::runfilesPath(path);
@@ -219,9 +213,11 @@ void TestEnvironment::exec(const std::vector<std::string>& args) {
 std::string TestEnvironment::writeStringToFileForTest(const std::string& filename,
                                                       const std::string& contents) {
   const std::string out_path = TestEnvironment::temporaryPath(filename);
+  RELEASE_ASSERT(::system(("mkdir -p $(dirname " + out_path + ")").c_str()) == 0);
   unlink(out_path.c_str());
   {
     std::ofstream out_file(out_path);
+    RELEASE_ASSERT(!out_file.fail());
     out_file << contents;
   }
   return out_path;

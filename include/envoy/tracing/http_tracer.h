@@ -57,6 +57,12 @@ public:
   virtual ~Span() {}
 
   /**
+   * Set the operation name.
+   * @param operation the operation name
+   */
+  virtual void setOperation(const std::string& operation) PURE;
+
+  /**
    * Attach metadata to a Span, to be handled in an implementation-dependent fashion.
    * @param name the name of the tag
    * @param value the value to associate with the tag
@@ -79,10 +85,12 @@ public:
 
   /**
    * Create and start a child Span, with this Span as its parent in the trace.
+   * @param config the tracing configuration
    * @param name operation name captured by the spawned child
    * @param start_time initial start time for the operation captured by the child
    */
-  virtual SpanPtr spawnChild(const std::string& name, SystemTime start_time) PURE;
+  virtual SpanPtr spawnChild(const Config& config, const std::string& name,
+                             SystemTime start_time) PURE;
 };
 
 /**
@@ -95,8 +103,8 @@ public:
   /**
    * Start driver specific span.
    */
-  virtual SpanPtr startSpan(Http::HeaderMap& request_headers, const std::string& operation_name,
-                            SystemTime start_time) PURE;
+  virtual SpanPtr startSpan(const Config& config, Http::HeaderMap& request_headers,
+                            const std::string& operation_name, SystemTime start_time) PURE;
 };
 
 typedef std::unique_ptr<Driver> DriverPtr;

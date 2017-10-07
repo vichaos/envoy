@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "envoy/access_log/access_log.h"
+#include "envoy/filesystem/filesystem.h"
 #include "envoy/thread/thread.h"
 
 #include "common/common/macros.h"
@@ -60,11 +62,32 @@ private:
 };
 
 /**
- * An optionally locking stderr logging sink.
+ * An optionally locking stderr or file logging sink.
+ *
+ * This sink outputs to either stderr or to a file.  It shares both implementations (instead of
+ * being two separate classes) because we can't setup file logging until after the AccessLogManager
+ * is available, but by that time some loggers have cached their logger from the registry already,
+ * so we need to be able switch implementations without replacing the object.
  */
-class LockingStderrSink : public spdlog::sinks::sink {
+class LockingStderrOrFileSink : public spdlog::sinks::sink {
 public:
   void setLock(Thread::BasicLockable& lock) { lock_ = &lock; }
+
+  /**
+   * Configure this object to log to stderr.
+   *
+   * @note This method is not thread-safe and can only be called when no other threads
+   * are logging.
+   */
+  void logToStdErr();
+
+  /**
+   * Configure this object to log to a file.
+   *
+   * @note This method is not thread-safe and can only be called when no other threads
+   * are logging.
+   */
+  void logToFile(const std::string& log_path, AccessLog::AccessLogManager& log_manager);
 
   // spdlog::sinks::sink
   void log(const spdlog::details::log_msg& msg) override;
@@ -72,6 +95,7 @@ public:
 
 private:
   Thread::BasicLockable* lock_{};
+  Filesystem::FileSharedPtr log_file_;
 };
 
 /**
@@ -89,8 +113,8 @@ public:
   /**
    * @return the singleton sink to use for all loggers.
    */
-  static std::shared_ptr<LockingStderrSink> getSink() {
-    static std::shared_ptr<LockingStderrSink> sink(new LockingStderrSink());
+  static std::shared_ptr<LockingStderrOrFileSink> getSink() {
+    static std::shared_ptr<LockingStderrOrFileSink> sink(new LockingStderrOrFileSink());
     return sink;
   }
 
@@ -102,10 +126,13 @@ public:
   /**
    * @return const std::vector<Logger>& the installed loggers.
    */
-  static const std::vector<Logger>& loggers() { return all_loggers_; }
+  static const std::vector<Logger>& loggers() { return allLoggers(); }
 
 private:
-  static std::vector<Logger> all_loggers_;
+  /*
+   * @return std::vector<Logger>& return the installed loggers.
+   */
+  static std::vector<Logger>& allLoggers();
 };
 
 /**
@@ -145,7 +172,7 @@ protected:
 
 #define ENVOY_LOG_info_TO_LOGGER(LOGGER, ...) LOGGER.info(LOG_PREFIX __VA_ARGS__)
 #define ENVOY_LOG_warn_TO_LOGGER(LOGGER, ...) LOGGER.warn(LOG_PREFIX __VA_ARGS__)
-#define ENVOY_LOG_err_TO_LOGGER(LOGGER, ...) LOGGER.err(LOG_PREFIX __VA_ARGS__)
+#define ENVOY_LOG_error_TO_LOGGER(LOGGER, ...) LOGGER.error(LOG_PREFIX __VA_ARGS__)
 #define ENVOY_LOG_critical_TO_LOGGER(LOGGER, ...) LOGGER.critical(LOG_PREFIX __VA_ARGS__)
 
 /**
@@ -194,5 +221,7 @@ protected:
 
 #define ENVOY_STREAM_LOG(LEVEL, FORMAT, STREAM, ...)                                               \
   ENVOY_STREAM_LOG_TO_LOGGER(ENVOY_LOGGER(), LEVEL, FORMAT, STREAM, ##__VA_ARGS__)
+
+// TODO(danielhochman): macros(s)/function(s) for logging structures that support iteration.
 
 } // namespace Envoy
