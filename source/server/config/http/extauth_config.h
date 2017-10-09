@@ -18,7 +18,6 @@ namespace Configuration {
 class ExtAuthConfig : public NamedHttpFilterConfigFactory {
 public:
   std::string name() override { return "extauth"; }
-  HttpFilterType type() override { return HttpFilterType::Decoder; }
 
   HttpFilterFactoryCb createFilterFactory(const Json::Object& json_config,
                                           const std::string& stats_prefix, FactoryContext& context);
