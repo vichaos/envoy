@@ -23,13 +23,68 @@ namespace Runtime {
 
 const size_t RandomGeneratorImpl::UUID_LENGTH = 36;
 
-std::string RandomGeneratorImpl::uuid() {
-  static thread_local uint8_t buffered[2048];
-  static thread_local size_t buffered_idx = sizeof(buffered);
+uint64_t RandomGeneratorImpl::random() {
+  // Prefetch 256 * sizeof(uint64_t) bytes of randomness. buffered_idx is initialized to 256,
+  // i.e. out-of-range value, so the buffer will be filled with randomness on the first call
+  // to this function.
+  //
+  // There is a diminishing return when increasing the prefetch size, as illustrated below in
+  // a test that generates 1,000,000,000 uint64_t numbers (results on Intel Xeon E5-1650v3).
+  //
+  // //test/common/runtime:runtime_impl_test - Random.DISABLED_benchmarkRandom
+  //
+  //  prefetch  |  time  | improvement
+  // (uint64_t) |  (ms)  | (% vs prev)
+  // ---------------------------------
+  //         32 | 25,931 |
+  //         64 | 15,124 | 42% faster
+  //        128 |  9,653 | 36% faster
+  //        256 |  6,930 | 28% faster  <-- used right now
+  //        512 |  5,571 | 20% faster
+  //       1024 |  4,888 | 12% faster
+  //       2048 |  4,594 |  6% faster
+  //       4096 |  4,424 |  4% faster
+  //       8192 |  4,386 |  1% faster
 
+  const size_t prefetch = 256;
+  static thread_local uint64_t buffered[prefetch];
+  static thread_local size_t buffered_idx = prefetch;
+
+  if (buffered_idx >= prefetch) {
+    int rc = RAND_bytes(reinterpret_cast<uint8_t*>(buffered), sizeof(buffered));
+    ASSERT(rc == 1);
+    UNREFERENCED_PARAMETER(rc);
+    buffered_idx = 0;
+  }
+
+  // Consume uint64_t from the buffer.
+  return buffered[buffered_idx++];
+}
+
+std::string RandomGeneratorImpl::uuid() {
   // Prefetch 2048 bytes of randomness. buffered_idx is initialized to sizeof(buffered),
   // i.e. out-of-range value, so the buffer will be filled with randomness on the first
   // call to this function.
+  //
+  // There is a diminishing return when increasing the prefetch size, as illustrated below
+  // in a test that generates 100,000,000 UUIDs (results on Intel Xeon E5-1650v3).
+  //
+  // //test/common/runtime:uuid_util_test - UUIDUtilsTest.DISABLED_benchmark
+  //
+  //   prefetch |  time  | improvement
+  //   (bytes)  |  (ms)  | (% vs prev)
+  // ---------------------------------
+  //        128 | 16,353 |
+  //        256 | 11,827 | 28% faster
+  //        512 |  9,676 | 18% faster
+  //       1024 |  8,594 | 11% faster
+  //       2048 |  8,097 |  6% faster  <-- used right now
+  //       4096 |  7,790 |  4% faster
+  //       8192 |  7,737 |  1% faster
+
+  static thread_local uint8_t buffered[2048];
+  static thread_local size_t buffered_idx = sizeof(buffered);
+
   if (buffered_idx >= sizeof(buffered)) {
     int rc = RAND_bytes(buffered, sizeof(buffered));
     ASSERT(rc == 1);
@@ -93,8 +148,9 @@ std::string RandomGeneratorImpl::uuid() {
 }
 
 SnapshotImpl::SnapshotImpl(const std::string& root_path, const std::string& override_path,
-                           RuntimeStats& stats, RandomGenerator& generator)
-    : generator_(generator) {
+                           RuntimeStats& stats, RandomGenerator& generator,
+                           Api::OsSysCalls& os_sys_calls)
+    : generator_(generator), os_sys_calls_(os_sys_calls) {
   try {
     walkDirectory(root_path, "");
     if (Filesystem::directoryExists(override_path)) {
@@ -153,10 +209,16 @@ void SnapshotImpl::walkDirectory(const std::string& path, const std::string& pre
       full_prefix = prefix + "." + entry->d_name;
     }
 
-    if (entry->d_type == DT_DIR && std::string(entry->d_name) != "." &&
+    struct stat stat_result;
+    int rc = os_sys_calls_.stat(full_path.c_str(), &stat_result);
+    if (rc != 0) {
+      throw EnvoyException(fmt::format("unable to stat file: '{}'", full_path));
+    }
+
+    if (S_ISDIR(stat_result.st_mode) && std::string(entry->d_name) != "." &&
         std::string(entry->d_name) != "..") {
       walkDirectory(full_path, full_prefix);
-    } else if (entry->d_type == DT_REG) {
+    } else if (S_ISREG(stat_result.st_mode)) {
       // Suck the file into a string. This is not very efficient but it should be good enough
       // for small files. Also, as noted elsewhere, none of this is non-blocking which could
       // theoretically lead to issues.
@@ -180,10 +242,11 @@ void SnapshotImpl::walkDirectory(const std::string& path, const std::string& pre
 LoaderImpl::LoaderImpl(Event::Dispatcher& dispatcher, ThreadLocal::SlotAllocator& tls,
                        const std::string& root_symlink_path, const std::string& subdir,
                        const std::string& override_dir, Stats::Store& store,
-                       RandomGenerator& generator)
+                       RandomGenerator& generator, Api::OsSysCallsPtr os_sys_calls)
     : watcher_(dispatcher.createFilesystemWatcher()), tls_(tls.allocateSlot()),
       generator_(generator), root_path_(root_symlink_path + "/" + subdir),
-      override_path_(root_symlink_path + "/" + override_dir), stats_(generateStats(store)) {
+      override_path_(root_symlink_path + "/" + override_dir), stats_(generateStats(store)),
+      os_sys_calls_(std::move(os_sys_calls)) {
   watcher_->addWatch(root_symlink_path, Filesystem::Watcher::Events::MovedTo,
                      [this](uint32_t) -> void { onSymlinkSwap(); });
 
@@ -198,7 +261,8 @@ RuntimeStats LoaderImpl::generateStats(Stats::Store& store) {
 }
 
 void LoaderImpl::onSymlinkSwap() {
-  current_snapshot_.reset(new SnapshotImpl(root_path_, override_path_, stats_, generator_));
+  current_snapshot_.reset(
+      new SnapshotImpl(root_path_, override_path_, stats_, generator_, *os_sys_calls_));
   ThreadLocal::ThreadLocalObjectSharedPtr ptr_copy = current_snapshot_;
   tls_->set([ptr_copy](Event::Dispatcher&) -> ThreadLocal::ThreadLocalObjectSharedPtr {
     return ptr_copy;

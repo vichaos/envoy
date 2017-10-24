@@ -1,3 +1,5 @@
+#include "common/stats/stats_impl.h"
+
 #include "server/hot_restart_impl.h"
 
 #include "test/mocks/api/mocks.h"
@@ -28,9 +30,18 @@ public:
     }));
     EXPECT_CALL(os_sys_calls_, bind(_, _, _));
 
+    Stats::RawStatData::configureForTestsOnly(options_);
+
     // Test we match the correct stat with empty-slots before, after, or both.
     hot_restart_.reset(new HotRestartImpl(options_, os_sys_calls_));
     hot_restart_->drainParentListeners();
+  }
+
+  void TearDown() {
+    // Configure it back so that later tests don't get the wonky values
+    // used here
+    NiceMock<MockOptions> default_options;
+    Stats::RawStatData::configureForTestsOnly(default_options);
   }
 
   Api::MockOsSysCalls os_sys_calls_;
@@ -38,6 +49,14 @@ public:
   std::vector<uint8_t> buffer_;
   std::unique_ptr<HotRestartImpl> hot_restart_;
 };
+
+TEST_F(HotRestartImplTest, versionString) {
+  setup();
+  EXPECT_EQ(hot_restart_->version(),
+            Envoy::Server::SharedMemory::version(options_.maxStats(),
+                                                 options_.maxObjNameLength() +
+                                                     Stats::RawStatData::maxStatSuffixLength()));
+}
 
 TEST_F(HotRestartImplTest, crossAlloc) {
   setup();
@@ -86,17 +105,9 @@ class HotRestartImplAlignmentTest : public HotRestartImplTest,
 public:
   HotRestartImplAlignmentTest() : name_len_(8 + GetParam()) {
     EXPECT_CALL(options_, maxStats()).WillRepeatedly(Return(num_stats_));
-    EXPECT_CALL(options_, maxStatNameLength()).WillRepeatedly(Return(name_len_));
-    Stats::RawStatData::configureForTestsOnly(options_);
-    EXPECT_EQ(name_len_, Stats::RawStatData::maxNameLength());
+    EXPECT_CALL(options_, maxObjNameLength()).WillRepeatedly(Return(name_len_));
     setup();
-  }
-
-  void TearDown() {
-    // Configure it back so that later tests don't get the wonky values
-    // used here
-    NiceMock<MockOptions> default_options;
-    Stats::RawStatData::configureForTestsOnly(default_options);
+    EXPECT_EQ(name_len_, Stats::RawStatData::maxObjNameLength());
   }
 
   static const uint64_t num_stats_ = 8;
@@ -124,7 +135,10 @@ TEST_P(HotRestartImplAlignmentTest, objectOverlap) {
   };
   std::vector<TestStat> stats;
   for (uint64_t i = 0; i < num_stats_; i++) {
-    std::string name = fmt::format("{}zzzzzzzzzzzzzzzzzzzzzzzzzzzz", i)
+    std::string name = fmt::format("{}zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+                                   "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+                                   "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+                                   i)
                            .substr(0, Stats::RawStatData::maxNameLength());
     TestStat ts;
     ts.stat_ = hot_restart_->alloc(name);

@@ -1,7 +1,8 @@
 #include "common/buffer/zero_copy_input_stream_impl.h"
 #include "common/grpc/codec.h"
 #include "common/grpc/common.h"
-#include "common/ratelimit/ratelimit.pb.h"
+
+#include "source/common/ratelimit/ratelimit.pb.h"
 
 #include "test/integration/http_integration.h"
 
@@ -60,7 +61,7 @@ public:
 
   void waitForRatelimitRequest() {
     fake_ratelimit_connection_ = fake_upstreams_[1]->waitForHttpConnection(*dispatcher_);
-    ratelimit_request_ = fake_ratelimit_connection_->waitForNewStream();
+    ratelimit_request_ = fake_ratelimit_connection_->waitForNewStream(*dispatcher_);
     pb::lyft::ratelimit::RateLimitRequest request_msg;
     ratelimit_request_->waitForGrpcMessage(*dispatcher_, request_msg);
     ratelimit_request_->waitForEndStream(*dispatcher_);
@@ -79,7 +80,7 @@ public:
 
   void waitForSuccessfulUpstreamResponse() {
     fake_upstream_connection_ = fake_upstreams_[0]->waitForHttpConnection(*dispatcher_);
-    upstream_request_ = fake_upstream_connection_->waitForNewStream();
+    upstream_request_ = fake_upstream_connection_->waitForNewStream(*dispatcher_);
     upstream_request_->waitForEndStream(*dispatcher_);
 
     upstream_request_->encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);

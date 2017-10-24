@@ -4,6 +4,7 @@
 #include "common/runtime/runtime_impl.h"
 #include "common/stats/stats_impl.h"
 
+#include "test/mocks/api/mocks.h"
 #include "test/mocks/event/mocks.h"
 #include "test/mocks/filesystem/mocks.h"
 #include "test/mocks/runtime/mocks.h"
@@ -13,12 +14,34 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnNew;
+using testing::_;
 
 namespace Envoy {
 namespace Runtime {
+
+TEST(Random, DISABLED_benchmarkRandom) {
+  Runtime::RandomGeneratorImpl random;
+
+  for (size_t i = 0; i < 1000000000; ++i) {
+    random.random();
+  }
+}
+
+TEST(Random, sanityCheckOfUniquenessRandom) {
+  Runtime::RandomGeneratorImpl random;
+  std::set<uint64_t> results;
+  const size_t num_of_results = 1000000;
+
+  for (size_t i = 0; i < num_of_results; ++i) {
+    results.insert(random.random());
+  }
+
+  EXPECT_EQ(num_of_results, results.size());
+}
 
 TEST(UUID, checkLengthOfUUID) {
   RandomGeneratorImpl random;
@@ -48,16 +71,25 @@ public:
         {TestEnvironment::runfilesPath("test/common/runtime/filesystem_setup.sh")});
   }
 
-  void setup(const std::string& primary_dir, const std::string& override_dir) {
+  void setup() {
     EXPECT_CALL(dispatcher, createFilesystemWatcher_())
         .WillOnce(ReturnNew<NiceMock<Filesystem::MockWatcher>>());
 
+    os_sys_calls_ = new NiceMock<Api::MockOsSysCalls>;
+    ON_CALL(*os_sys_calls_, stat(_, _))
+        .WillByDefault(
+            Invoke([](const char* filename, struct stat* stat) { return ::stat(filename, stat); }));
+  }
+
+  void run(const std::string& primary_dir, const std::string& override_dir) {
+    Api::OsSysCallsPtr os_sys_calls(os_sys_calls_);
     loader.reset(new LoaderImpl(dispatcher, tls, TestEnvironment::temporaryPath(primary_dir),
-                                "envoy", override_dir, store, generator));
+                                "envoy", override_dir, store, generator, std::move(os_sys_calls)));
   }
 
   Event::MockDispatcher dispatcher;
   NiceMock<ThreadLocal::MockInstance> tls;
+  NiceMock<Api::MockOsSysCalls>* os_sys_calls_{};
 
   Stats::IsolatedStoreImpl store;
   MockRandomGenerator generator;
@@ -65,7 +97,8 @@ public:
 };
 
 TEST_F(RuntimeImplTest, All) {
-  setup("test/common/runtime/test_data/current", "envoy_override");
+  setup();
+  run("test/common/runtime/test_data/current", "envoy_override");
 
   // Basic string getting.
   EXPECT_EQ("world", loader->snapshot().get("file2"));
@@ -96,10 +129,21 @@ TEST_F(RuntimeImplTest, All) {
   EXPECT_EQ("hello override", loader->snapshot().get("file1"));
 }
 
-TEST_F(RuntimeImplTest, BadDirectory) { setup("/baddir", "/baddir"); }
+TEST_F(RuntimeImplTest, BadDirectory) {
+  setup();
+  run("/baddir", "/baddir");
+}
+
+TEST_F(RuntimeImplTest, BadStat) {
+  setup();
+  EXPECT_CALL(*os_sys_calls_, stat(_, _)).WillOnce(Return(-1));
+  run("test/common/runtime/test_data/current", "envoy_override");
+  EXPECT_EQ(store.counter("runtime.load_error").value(), 1);
+}
 
 TEST_F(RuntimeImplTest, OverrideFolderDoesNotExist) {
-  setup("test/common/runtime/test_data/current", "envoy_override_does_not_exist");
+  setup();
+  run("test/common/runtime/test_data/current", "envoy_override_does_not_exist");
 
   EXPECT_EQ("hello", loader->snapshot().get("file1"));
 }

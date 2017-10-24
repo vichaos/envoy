@@ -241,7 +241,8 @@ public:
 
 /**
  * All cluster load report stats. These are only use for EDS load reporting and not sent to the
- * stats sink. See envoy.api.v2.ClusterStats for the definition of upstream_rq_dropped.
+ * stats sink. See envoy.api.v2.ClusterStats for the definition of upstream_rq_dropped. These are
+ * latched by LoadStatsReporter, independent of the normal stats sink flushing.
  */
 // clang-format off
 #define ALL_CLUSTER_LOAD_REPORT_STATS(COUNTER)                                                     \
@@ -359,6 +360,11 @@ public:
    * @return a source address to bind to or nullptr if no bind need occur.
    */
   virtual const Network::Address::InstanceConstSharedPtr& sourceAddress() const PURE;
+
+  /**
+   * @return the configuration for load balancer subsets.
+   */
+  virtual const LoadBalancerSubsetInfo& lbSubsetInfo() const PURE;
 };
 
 typedef std::shared_ptr<const ClusterInfo> ClusterInfoConstSharedPtr;

@@ -15,6 +15,9 @@
 #include "envoy/tracing/http_tracer.h"
 #include "envoy/upstream/resource_manager.h"
 
+#include "common/protobuf/protobuf.h"
+#include "common/protobuf/utility.h"
+
 namespace Envoy {
 namespace Router {
 
@@ -216,14 +219,56 @@ public:
   virtual ~HashPolicy() {}
 
   /**
+   * A callback used for requesting that a cookie be set with the given lifetime.
+   * @param key the name of the cookie to be set
+   * @param ttl the lifetime of the cookie
+   * @return std::string the opaque value of the cookie that will be set
+   */
+  typedef std::function<std::string(const std::string& key, std::chrono::seconds ttl)>
+      AddCookieCallback;
+
+  /**
    * @param downstream_address contains the address of the connected client host, or an
    * empty string if the request is initiated from within this host
    * @param headers stores the HTTP headers for the stream
+   * @param add_cookie is called to add a set-cookie header on the reply sent to the downstream
+   * host
    * @return Optional<uint64_t> an optional hash value to route on. A hash value might not be
    * returned if for example the specified HTTP header does not exist.
    */
   virtual Optional<uint64_t> generateHash(const std::string& downstream_address,
-                                          const Http::HeaderMap& headers) const PURE;
+                                          const Http::HeaderMap& headers,
+                                          AddCookieCallback add_cookie) const PURE;
+};
+
+class MetadataMatchCriterion {
+public:
+  virtual ~MetadataMatchCriterion() {}
+
+  /*
+   * @return const std::string& the name of the metadata key
+   */
+  virtual const std::string& name() const PURE;
+
+  /*
+   * @return const Envoy::HashedValue& the value for the metadata key
+   */
+  virtual const HashedValue& value() const PURE;
+};
+
+typedef std::shared_ptr<const MetadataMatchCriterion> MetadataMatchCriterionConstSharedPtr;
+
+class MetadataMatchCriteria {
+public:
+  virtual ~MetadataMatchCriteria() {}
+
+  /*
+   * @return std::vector<MetadataMatchCriterionConstSharedPtr>& a vector of
+   * metadata to be matched against upstream endpoints when load
+   * balancing, sorted lexically by name.
+   */
+  virtual const std::vector<MetadataMatchCriterionConstSharedPtr>&
+  metadataMatchCriteria() const PURE;
 };
 
 /**
@@ -308,6 +353,12 @@ public:
   virtual bool useWebSocket() const PURE;
 
   /**
+   * @return MetadataMatchCriteria* the metadata that a subset load balancer should match when
+   * selecting an upstream host
+   */
+  virtual const MetadataMatchCriteria* metadataMatchCriteria() const PURE;
+
+  /**
    * @return const std::multimap<std::string, std::string> the opaque configuration associated
    *         with the route
    */
@@ -331,6 +382,12 @@ public:
    * @param Tracing::Span& the span.
    */
   virtual void apply(Tracing::Span& span) const PURE;
+
+  /**
+   * This method returns the operation name.
+   * @return the operation name
+   */
+  virtual const std::string& getOperation() const PURE;
 };
 
 typedef std::unique_ptr<const Decorator> DecoratorConstPtr;
@@ -396,13 +453,6 @@ public:
    * router.
    */
   virtual const std::list<Http::LowerCaseString>& responseHeadersToRemove() const PURE;
-
-  /**
-   * Return whether the configuration makes use of runtime or not. Callers can use this to
-   * determine whether they should use a fast or slow source of randomness when calling route
-   * functions.
-   */
-  virtual bool usesRuntime() const PURE;
 };
 
 typedef std::shared_ptr<const Config> ConfigConstSharedPtr;

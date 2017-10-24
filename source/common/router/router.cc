@@ -279,10 +279,11 @@ Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool e
 
 #ifndef NVLOG
   headers.iterate(
-      [](const Http::HeaderEntry& header, void* context) -> void {
+      [](const Http::HeaderEntry& header, void* context) -> Http::HeaderMap::Iterate {
         ENVOY_STREAM_LOG(debug, "  '{}':'{}'",
                          *static_cast<Http::StreamDecoderFilterCallbacks*>(context),
                          header.key().c_str(), header.value().c_str());
+        return Http::HeaderMap::Iterate::Continue;
       },
       callbacks_);
 #endif
@@ -595,6 +596,11 @@ void Filter::onUpstreamHeaders(Http::HeaderMapPtr&& headers, bool end_stream) {
   chargeUpstreamCode(response_code, *headers, upstream_request_->upstream_host_, false);
   if (!Http::CodeUtility::is5xx(response_code)) {
     handleNon5xxResponseHeaders(*headers, end_stream);
+  }
+
+  // Append routing cookies
+  for (const auto& header_value : downstream_set_cookies_) {
+    headers->addReferenceKey(Http::Headers::get().SetCookie, header_value);
   }
 
   downstream_response_started_ = true;

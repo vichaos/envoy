@@ -85,8 +85,8 @@ std::string Utility::parseCookieValue(const HeaderMap& headers, const std::strin
   State state;
   state.key_ = key;
 
-  headers.iterate(
-      [](const HeaderEntry& header, void* context) -> void {
+  headers.iterateReverse(
+      [](const HeaderEntry& header, void* context) -> HeaderMap::Iterate {
         // Find the cookie headers in the request (typically, there's only one).
         if (header.key() == Http::Headers::get().Cookie.get().c_str()) {
           // Split the cookie header into individual cookies.
@@ -111,10 +111,52 @@ std::string Utility::parseCookieValue(const HeaderMap& headers, const std::strin
                 v = v.substr(1, v.size() - 2);
               }
               state->ret_ = v;
-              return;
+              return HeaderMap::Iterate::Break;
             }
           }
         }
+        return HeaderMap::Iterate::Continue;
+      },
+      &state);
+
+  return state.ret_;
+}
+
+std::string Utility::makeSetCookieValue(const std::string& key, const std::string& value,
+                                        const std::chrono::seconds max_age) {
+  return fmt::format("{}=\"{}\"; Max-Age={}", key, value, max_age.count());
+}
+
+bool Utility::hasSetCookie(const HeaderMap& headers, const std::string& key) {
+
+  struct State {
+    std::string key_;
+    bool ret_;
+  };
+
+  State state;
+  state.key_ = key;
+  state.ret_ = false;
+
+  headers.iterate(
+      [](const HeaderEntry& header, void* context) -> HeaderMap::Iterate {
+        // Find the set-cookie headers in the request
+        if (header.key() == Http::Headers::get().SetCookie.get().c_str()) {
+          const std::string value{header.value().c_str()};
+          const size_t equals_index = value.find('=');
+
+          if (equals_index == std::string::npos) {
+            // The cookie is malformed if it does not have an `=`.
+            return HeaderMap::Iterate::Continue;
+          }
+          std::string k = value.substr(0, equals_index);
+          State* state = static_cast<State*>(context);
+          if (k == state->key_) {
+            state->ret_ = true;
+            return HeaderMap::Iterate::Break;
+          }
+        }
+        return HeaderMap::Iterate::Continue;
       },
       &state);
 

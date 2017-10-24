@@ -16,6 +16,11 @@ function install {
     fi
 }
 
+if ! brew update; then
+    echo "Failed to update homebrew"
+    exit 1
+fi
+
 DEPS="coreutils wget cmake libtool go bazel"
 for DEP in ${DEPS}
 do
@@ -26,10 +31,4 @@ if [ -n "$CIRCLECI" ]; then
     # bazel uses jgit internally and the default circle-ci .gitconfig says to
     # convert https://github.com to ssh://git@github.com, which jgit does not support.
     mv ~/.gitconfig ~/.gitconfig_save
-
-    # Configure bazelrc for better output in mac/circle builds
-    echo >~/.bazelrc <<EOF
-build --curses=no --show_task_finish
-test --curses=no --show_task_finish
-EOF
 fi
