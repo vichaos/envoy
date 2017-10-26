@@ -1,2 +1,7 @@
 ENVOY_BUILD_SHA=$(grep lyft/envoy-build .circleci/config.yml | sed -e 's#.*lyft/envoy-build:\(.*\)#\1#' | uniq)
-[[ $(wc -l <<< "${ENVOY_BUILD_SHA}") == 1 ]] || (echo ".circleci/config.yml hashes are inconsistent!" && exit 1)
+
+if [ $(wc -l <<< "${ENVOY_BUILD_SHA}") -ne 1 ]; then
+    echo ".circleci/config.yml hashes are inconsistent!" >&2
+    exit 1
+fi
+
