@@ -42,11 +42,12 @@ void ExtAuth::dumpHeaders(const char* what, HeaderMap* headers) {
   ENVOY_STREAM_LOG(trace, "ExtAuth headers ({}):", *callbacks_, what);
 
   headers->iterate(
-      [](const HeaderEntry& header, void* context) -> void {
+      [](const HeaderEntry& header, void* context) -> HeaderMap::Iterate {
         ENVOY_STREAM_LOG(trace, "  '{}':'{}'", *static_cast<StreamDecoderFilterCallbacks*>(context),
                          header.key().c_str(), header.value().c_str());
+        return HeaderMap::Iterate::Continue;
       },
-      callbacks_);
+      static_cast<void*>(callbacks_));
 #endif
 }
 

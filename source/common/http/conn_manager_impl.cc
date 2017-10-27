@@ -612,9 +612,10 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(ActiveStreamDecoderFilte
                      static_cast<const void*>((*entry).get()), static_cast<uint64_t>(status));
 #ifndef NVLOG
     headers.iterate(
-        [](const HeaderEntry& header, void* context) -> void {
+        [](const HeaderEntry& header, void* context) -> HeaderMap::Iterate {
           ENVOY_STREAM_LOG(trace, "  H'{}':'{}'", *static_cast<ActiveStream*>(context),
                            header.key().c_str(), header.value().c_str());
+          return HeaderMap::Iterate::Continue;
         },
         this);
 #endif
@@ -1117,7 +1118,7 @@ Router::RouteConstSharedPtr ConnectionManagerImpl::ActiveStreamFilterBase::route
   if (!parent_.cached_route_.valid()) {
     ENVOY_STREAM_LOG(trace, "no route cached: filter={}", parent_, static_cast<const void*>(this));
     parent_.request_headers_->iterate(
-        [](const HeaderEntry& header, void* vctx) -> void {
+        [](const HeaderEntry& header, void* vctx) -> HeaderMap::Iterate {
           ConnectionManagerImpl::ActiveStreamFilterBase* self =
               static_cast<ConnectionManagerImpl::ActiveStreamFilterBase*>(vctx);
 
@@ -1125,6 +1126,8 @@ Router::RouteConstSharedPtr ConnectionManagerImpl::ActiveStreamFilterBase::route
           std::string value(header.value().c_str());
 
           ENVOY_STREAM_LOG(trace, "routing on header {}: {}", self->parent_, key, value);
+
+          return HeaderMap::Iterate::Continue;
         },
         static_cast<void*>(this));
 
