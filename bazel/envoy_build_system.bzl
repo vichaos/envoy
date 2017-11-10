@@ -10,7 +10,7 @@ def envoy_copts(repository, test = False):
         "-Wnon-virtual-dtor",
         "-Woverloaded-virtual",
         "-Wold-style-cast",
-        "-std=c++0x",
+        "-std=c++14",
     ] + select({
         # Bazel adds an implicit -DNDEBUG for opt.
         repository + "//bazel:opt_build": [] if test else ["-ggdb3"],
@@ -40,10 +40,13 @@ def envoy_linkopts():
             # TODO(zuercher): should be able to remove this after the next gperftools release after
             # 2.6.1 (see discussion at https://github.com/gperftools/gperftools/issues/901)
             "-Wl,-U,___lsan_ignore_object",
+            # See note here: http://luajit.org/install.html
+            "-pagezero_size 10000", "-image_base 100000000",
         ],
         "//conditions:default": [
             "-pthread",
             "-lrt",
+            "-ldl",
             # Force MD5 hash in build. This is part of the workaround for
             # https://github.com/bazelbuild/bazel/issues/2805. Bazel actually
             # does this by itself prior to
@@ -66,11 +69,13 @@ def envoy_test_linkopts():
             # TODO(zuercher): should be able to remove this after the next gperftools release after
             # 2.6.1 (see discussion at https://github.com/gperftools/gperftools/issues/901)
             "-Wl,-U,___lsan_ignore_object",
+            # See note here: http://luajit.org/install.html
+            "-pagezero_size 10000", "-image_base 100000000",
         ],
 
         # TODO(mattklein123): It's not great that we universally link against the following libs.
         # In particular, -latomic and -lrt are not needed on all platforms. Make this more granular.
-        "//conditions:default": ["-pthread", "-latomic", "-lrt"],
+        "//conditions:default": ["-pthread", "-latomic", "-lrt", "-ldl"],
     })
 
 # References to Envoy external dependencies should be wrapped with this function.
@@ -165,7 +170,8 @@ def envoy_cc_binary(name,
                     visibility = None,
                     repository = "",
                     stamped = False,
-                    deps = []):
+                    deps = [],
+                    linkopts = envoy_linkopts()):
     # Implicit .stamped targets to obtain builds with the (truncated) git SHA1.
     if stamped:
         _git_stamped_genrule(repository, name)
@@ -175,7 +181,7 @@ def envoy_cc_binary(name,
         srcs = srcs,
         data = data,
         copts = envoy_copts(repository),
-        linkopts = envoy_linkopts(),
+        linkopts = linkopts,
         testonly = testonly,
         linkstatic = 1,
         visibility = visibility,

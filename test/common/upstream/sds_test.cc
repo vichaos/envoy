@@ -117,7 +117,7 @@ protected:
 
 TEST_F(SdsTest, Shutdown) {
   setupRequest();
-  cluster_->initialize();
+  cluster_->initialize([] {});
   EXPECT_CALL(request_, cancel());
   cluster_.reset();
 }
@@ -125,19 +125,18 @@ TEST_F(SdsTest, Shutdown) {
 TEST_F(SdsTest, PoolFailure) {
   setupPoolFailure();
   EXPECT_CALL(*timer_, enableTimer(_));
-  cluster_->initialize();
+  cluster_->initialize([] {});
 }
 
 TEST_F(SdsTest, NoHealthChecker) {
   InSequence s;
   setupRequest();
-  cluster_->initialize();
 
   cluster_->addMemberUpdateCb(
       [&](const std::vector<HostSharedPtr>&, const std::vector<HostSharedPtr>&) -> void {
         membership_updated_.ready();
       });
-  cluster_->setInitializedCb([&]() -> void { membership_updated_.ready(); });
+  cluster_->initialize([&]() -> void { membership_updated_.ready(); });
 
   Http::MessagePtr message(new Http::ResponseMessageImpl(
       Http::HeaderMapPtr{new Http::TestHeaderMapImpl{{":status", "200"}}}));
@@ -230,10 +229,9 @@ TEST_F(SdsTest, HealthChecker) {
   EXPECT_CALL(*health_checker, start());
   EXPECT_CALL(*health_checker, addHostCheckCompleteCb(_));
   cluster_->setHealthChecker(health_checker);
-  cluster_->setInitializedCb([&]() -> void { membership_updated_.ready(); });
 
   setupRequest();
-  cluster_->initialize();
+  cluster_->initialize([&]() -> void { membership_updated_.ready(); });
 
   // Load in all of the hosts the first time, this will setup first pass health checking. We expect
   // all the hosts to load in unhealthy.
@@ -257,20 +255,22 @@ TEST_F(SdsTest, HealthChecker) {
   EXPECT_EQ(0UL, cluster_->healthyHostsPerLocality()[2].size());
   EXPECT_EQ(6860994315024339285U, cluster_->info()->stats().version_.value());
 
-  // Now run through and make all the hosts healthy except for the first one.
+  // Now run through and make all the hosts healthy except for the first one. Because we are
+  // blocking HC updates, they should all still be unhealthy.
   for (size_t i = 1; i < cluster_->hosts().size(); i++) {
     cluster_->hosts()[i]->healthFlagClear(Host::HealthFlag::FAILED_ACTIVE_HC);
     health_checker->runCallbacks(cluster_->hosts()[i], true);
   }
 
-  EXPECT_EQ(12UL, cluster_->healthyHosts().size());
-  EXPECT_EQ(12UL, cluster_->info()->stats().membership_healthy_.value());
+  EXPECT_EQ(0UL, cluster_->healthyHosts().size());
+  EXPECT_EQ(0UL, cluster_->info()->stats().membership_healthy_.value());
   EXPECT_EQ(3UL, cluster_->healthyHostsPerLocality().size());
-  EXPECT_EQ(3UL, cluster_->healthyHostsPerLocality()[0].size());
-  EXPECT_EQ(5UL, cluster_->healthyHostsPerLocality()[1].size());
-  EXPECT_EQ(4UL, cluster_->healthyHostsPerLocality()[2].size());
+  EXPECT_EQ(0UL, cluster_->healthyHostsPerLocality()[0].size());
+  EXPECT_EQ(0UL, cluster_->healthyHostsPerLocality()[1].size());
+  EXPECT_EQ(0UL, cluster_->healthyHostsPerLocality()[2].size());
 
-  // Do the last one now which should fire the initialized event.
+  // Do the last one now which should fire the initialized event. It should also cause a healthy
+  // host recalculation and unblock health updates.
   EXPECT_CALL(membership_updated_, ready());
   cluster_->hosts()[0]->healthFlagClear(Host::HealthFlag::FAILED_ACTIVE_HC);
   health_checker->runCallbacks(cluster_->hosts()[0], true);
@@ -350,7 +350,7 @@ TEST_F(SdsTest, HealthChecker) {
 
 TEST_F(SdsTest, Failure) {
   setupRequest();
-  cluster_->initialize();
+  cluster_->initialize([] {});
 
   std::string bad_response_json = R"EOF(
   {
@@ -371,7 +371,7 @@ TEST_F(SdsTest, Failure) {
 
 TEST_F(SdsTest, FailureArray) {
   setupRequest();
-  cluster_->initialize();
+  cluster_->initialize([] {});
 
   std::string bad_response_json = R"EOF(
   []

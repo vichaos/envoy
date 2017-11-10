@@ -89,6 +89,8 @@ void FilterJson::translateAccessLogFilter(
 
 void FilterJson::translateAccessLog(const Json::Object& json_access_log,
                                     envoy::api::v2::filter::AccessLog& access_log) {
+  json_access_log.validateSchema(Json::Schema::ACCESS_LOG_SCHEMA);
+
   envoy::api::v2::filter::FileAccessLog file_access_log;
 
   JSON_UTIL_SET_STRING(json_access_log, file_access_log, path);
@@ -108,11 +110,11 @@ void FilterJson::translateAccessLog(const Json::Object& json_access_log,
 
 void FilterJson::translateHttpConnectionManager(
     const Json::Object& json_http_connection_manager,
-    envoy::api::v2::filter::HttpConnectionManager& http_connection_manager) {
+    envoy::api::v2::filter::http::HttpConnectionManager& http_connection_manager) {
   json_http_connection_manager.validateSchema(Json::Schema::HTTP_CONN_NETWORK_FILTER_SCHEMA);
 
-  envoy::api::v2::filter::HttpConnectionManager::CodecType codec_type{};
-  envoy::api::v2::filter::HttpConnectionManager::CodecType_Parse(
+  envoy::api::v2::filter::http::HttpConnectionManager::CodecType codec_type{};
+  envoy::api::v2::filter::http::HttpConnectionManager::CodecType_Parse(
       StringUtil::toUpper(json_http_connection_manager.getString("codec_type")), &codec_type);
   http_connection_manager.set_codec_type(codec_type);
 
@@ -155,8 +157,8 @@ void FilterJson::translateHttpConnectionManager(
     const auto json_tracing = json_http_connection_manager.getObject("tracing");
     auto* tracing = http_connection_manager.mutable_tracing();
 
-    envoy::api::v2::filter::HttpConnectionManager::Tracing::OperationName operation_name{};
-    envoy::api::v2::filter::HttpConnectionManager::Tracing::OperationName_Parse(
+    envoy::api::v2::filter::http::HttpConnectionManager::Tracing::OperationName operation_name{};
+    envoy::api::v2::filter::http::HttpConnectionManager::Tracing::OperationName_Parse(
         StringUtil::toUpper(json_tracing->getString("operation_name")), &operation_name);
     tracing->set_operation_name(operation_name);
 
@@ -192,8 +194,8 @@ void FilterJson::translateHttpConnectionManager(
   JSON_UTIL_SET_BOOL(json_http_connection_manager, http_connection_manager, use_remote_address);
   JSON_UTIL_SET_BOOL(json_http_connection_manager, http_connection_manager, generate_request_id);
 
-  envoy::api::v2::filter::HttpConnectionManager::ForwardClientCertDetails fcc_details{};
-  envoy::api::v2::filter::HttpConnectionManager::ForwardClientCertDetails_Parse(
+  envoy::api::v2::filter::http::HttpConnectionManager::ForwardClientCertDetails fcc_details{};
+  envoy::api::v2::filter::http::HttpConnectionManager::ForwardClientCertDetails_Parse(
       StringUtil::toUpper(
           json_http_connection_manager.getString("forward_client_cert", "sanitize")),
       &fcc_details);
@@ -211,6 +213,73 @@ void FilterJson::translateHttpConnectionManager(
           true);
     }
   }
+}
+
+void FilterJson::translateMongoProxy(const Json::Object& json_mongo_proxy,
+                                     envoy::api::v2::filter::network::MongoProxy& mongo_proxy) {
+  json_mongo_proxy.validateSchema(Json::Schema::MONGO_PROXY_NETWORK_FILTER_SCHEMA);
+
+  JSON_UTIL_SET_STRING(json_mongo_proxy, mongo_proxy, stat_prefix);
+  JSON_UTIL_SET_STRING(json_mongo_proxy, mongo_proxy, access_log);
+  if (json_mongo_proxy.hasObject("fault")) {
+    const auto json_fault = json_mongo_proxy.getObject("fault")->getObject("fixed_delay");
+    auto* delay = mongo_proxy.mutable_delay();
+
+    delay->set_type(envoy::api::v2::filter::FaultDelay::FIXED);
+    delay->set_percent(static_cast<uint32_t>(json_fault->getInteger("percent")));
+    JSON_UTIL_SET_DURATION_FROM_FIELD(*json_fault, *delay, fixed_delay, duration);
+  }
+}
+
+void FilterJson::translateFaultFilter(const Json::Object& json_fault,
+                                      envoy::api::v2::filter::http::HTTPFault& fault) {
+  json_fault.validateSchema(Json::Schema::FAULT_HTTP_FILTER_SCHEMA);
+
+  const Json::ObjectSharedPtr config_abort = json_fault.getObject("abort", true);
+  const Json::ObjectSharedPtr config_delay = json_fault.getObject("delay", true);
+
+  if (!config_abort->empty()) {
+    auto* abort_fault = fault.mutable_abort();
+    abort_fault->set_percent(static_cast<uint32_t>(config_abort->getInteger("abort_percent")));
+
+    // TODO(mattklein123): Throw error if invalid return code is provided
+    abort_fault->set_http_status(static_cast<uint32_t>(config_abort->getInteger("http_status")));
+  }
+
+  if (!config_delay->empty()) {
+    auto* delay = fault.mutable_delay();
+    delay->set_type(envoy::api::v2::filter::FaultDelay::FIXED);
+    delay->set_percent(static_cast<uint32_t>(config_delay->getInteger("fixed_delay_percent")));
+    JSON_UTIL_SET_DURATION_FROM_FIELD(*config_delay, *delay, fixed_delay, fixed_duration);
+  }
+
+  for (const auto json_header_matcher : json_fault.getObjectArray("headers", true)) {
+    auto* header_matcher = fault.mutable_headers()->Add();
+    RdsJson::translateHeaderMatcher(*json_header_matcher, *header_matcher);
+  }
+
+  JSON_UTIL_SET_STRING(json_fault, fault, upstream_cluster);
+
+  for (auto json_downstream_node : json_fault.getStringArray("downstream_nodes", true)) {
+    auto* downstream_node = fault.mutable_downstream_nodes()->Add();
+    *downstream_node = json_downstream_node;
+  }
+}
+
+void FilterJson::translateRouter(const Json::Object& json_router,
+                                 envoy::api::v2::filter::http::Router& router) {
+  json_router.validateSchema(Json::Schema::ROUTER_HTTP_FILTER_SCHEMA);
+
+  router.mutable_dynamic_stats()->set_value(json_router.getBoolean("dynamic_stats", true));
+  router.set_start_child_span(json_router.getBoolean("start_child_span", false));
+}
+
+void FilterJson::translateBufferFilter(const Json::Object& json_buffer,
+                                       envoy::api::v2::filter::http::Buffer& buffer) {
+  json_buffer.validateSchema(Json::Schema::BUFFER_HTTP_FILTER_SCHEMA);
+
+  JSON_UTIL_SET_INTEGER(json_buffer, buffer, max_request_bytes);
+  JSON_UTIL_SET_DURATION_SECONDS(json_buffer, buffer, max_request_time);
 }
 
 } // namespace Config

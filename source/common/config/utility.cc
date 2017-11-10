@@ -1,5 +1,7 @@
 #include "common/config/utility.h"
 
+#include <unordered_set>
+
 #include "common/common/assert.h"
 #include "common/common/hex.h"
 #include "common/common/utility.h"
@@ -86,7 +88,8 @@ void Utility::translateCdsConfig(const Json::Object& json_config,
                            *cds_config.mutable_api_config_source());
 }
 
-void Utility::translateRdsConfig(const Json::Object& json_rds, envoy::api::v2::filter::Rds& rds) {
+void Utility::translateRdsConfig(const Json::Object& json_rds,
+                                 envoy::api::v2::filter::http::Rds& rds) {
   json_rds.validateSchema(Json::Schema::RDS_CONFIGURATION_SCHEMA);
 
   const std::string name = json_rds.getString("route_config_name", "");
