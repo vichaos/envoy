@@ -13,7 +13,8 @@ rsync -Pav /xfer/ ~/envoy
 cd ~/envoy
 
 # bazel "$BAZELCMD" --spawn_strategy=standalone --verbose_failures -c dbg --config=clang-asan "$TARGET"
-bazel "$BAZELCMD" --verbose_failures -c dbg --config=clang-asan "$TARGET"
+# bazel "$BAZELCMD" --verbose_failures -c dbg --config=clang-asan "$TARGET"
+bazel "$BAZELCMD" --verbose_failures -c dbg "$TARGET"
 
 rm /xfer/ci/envoy-static-binary
 cp bazel-bin/source/exe/envoy-static /xfer/ci/envoy-static-binary
