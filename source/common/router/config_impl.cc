@@ -30,16 +30,6 @@
 
 namespace Envoy {
 namespace Router {
-namespace {
-
-Router::HeaderAddition
-makeHeaderToAdd(const envoy::api::v2::HeaderValueOption& header_value_option) {
-  return Router::HeaderAddition{Http::LowerCaseString(header_value_option.header().key()),
-                                header_value_option.header().value(),
-                                PROTOBUF_GET_WRAPPED_OR_DEFAULT(header_value_option, append, true)};
-}
-
-} // namespace
 
 std::string SslRedirector::newPath(const Http::HeaderMap& headers) const {
   return Http::Utility::createSslRedirectPath(headers);
@@ -235,6 +225,8 @@ RouteEntryImplBase::RouteEntryImplBase(const VirtualHostImpl& vhost,
       auto_host_rewrite_(PROTOBUF_GET_WRAPPED_OR_DEFAULT(route.route(), auto_host_rewrite, false)),
       use_websocket_(PROTOBUF_GET_WRAPPED_OR_DEFAULT(route.route(), use_websocket, false)),
       cluster_name_(route.route().cluster()), cluster_header_name_(route.route().cluster_header()),
+      cluster_not_found_response_code_(ConfigUtility::parseClusterNotFoundResponseCode(
+          route.route().cluster_not_found_response_code())),
       timeout_(PROTOBUF_GET_MS_OR_DEFAULT(route.route(), timeout, DEFAULT_ROUTE_TIMEOUT_MS)),
       runtime_(loadRuntimeData(route.match())), loader_(loader),
       host_redirect_(route.redirect().host_redirect()),
@@ -242,6 +234,8 @@ RouteEntryImplBase::RouteEntryImplBase(const VirtualHostImpl& vhost,
       rate_limit_policy_(route.route().rate_limits()), shadow_policy_(route.route()),
       priority_(ConfigUtility::parsePriority(route.route().priority())),
       request_headers_parser_(RequestHeaderParser::parse(route.route().request_headers_to_add())),
+      response_headers_parser_(ResponseHeaderParser::parse(
+          route.route().response_headers_to_add(), route.route().response_headers_to_remove())),
       opaque_config_(parseOpaqueConfig(route)), decorator_(parseDecorator(route)),
       redirect_response_code_(
           ConfigUtility::parseRedirectResponseCode(route.redirect().response_code())) {
@@ -301,10 +295,6 @@ RouteEntryImplBase::RouteEntryImplBase(const VirtualHostImpl& vhost,
     hash_policy_.reset(new HashPolicyImpl(route.route().hash_policy()));
   }
 
-  for (const auto& header_value_option : route.route().request_headers_to_add()) {
-    request_headers_to_add_.push_back(makeHeaderToAdd(header_value_option));
-  }
-
   // Only set include_vh_rate_limits_ to true if the rate limit policy for the route is empty
   // or the route set `include_vh_rate_limits` to true.
   include_vh_rate_limits_ =
@@ -342,6 +332,12 @@ void RouteEntryImplBase::finalizeRequestHeaders(Http::HeaderMap& headers,
     return;
   }
   headers.Host()->value(host_rewrite_);
+}
+
+void RouteEntryImplBase::finalizeResponseHeaders(Http::HeaderMap& headers) const {
+  response_headers_parser_->evaluateResponseHeaders(headers);
+  vhost_.responseHeaderParser().evaluateResponseHeaders(headers);
+  vhost_.globalRouteConfig().responseHeaderParser().evaluateResponseHeaders(headers);
 }
 
 Optional<RouteEntryImplBase::RuntimeData>
@@ -464,7 +460,7 @@ RouteConstSharedPtr RouteEntryImplBase::clusterEntry(const Http::HeaderMap& head
   uint64_t end = 0UL;
 
   // Find the right cluster to route to based on the interval in which
-  // the selected value falls.  The intervals are determined as
+  // the selected value falls. The intervals are determined as
   // [0, cluster1_weight), [cluster1_weight, cluster1_weight+cluster2_weight),..
   for (const WeightedClusterEntrySharedPtr& cluster : weighted_clusters_) {
     end = begin + cluster->clusterWeight();
@@ -601,7 +597,9 @@ VirtualHostImpl::VirtualHostImpl(const envoy::api::v2::VirtualHost& virtual_host
                                  Upstream::ClusterManager& cm, bool validate_clusters)
     : name_(virtual_host.name()), rate_limit_policy_(virtual_host.rate_limits()),
       global_route_config_(global_route_config),
-      request_headers_parser_(RequestHeaderParser::parse(virtual_host.request_headers_to_add())) {
+      request_headers_parser_(RequestHeaderParser::parse(virtual_host.request_headers_to_add())),
+      response_headers_parser_(ResponseHeaderParser::parse(
+          virtual_host.response_headers_to_add(), virtual_host.response_headers_to_remove())) {
   switch (virtual_host.require_tls()) {
   case envoy::api::v2::VirtualHost::NONE:
     ssl_requirements_ = SslRequirements::NONE;
@@ -614,10 +612,6 @@ VirtualHostImpl::VirtualHostImpl(const envoy::api::v2::VirtualHost& virtual_host
     break;
   default:
     NOT_REACHED;
-  }
-
-  for (const auto& header_value_option : virtual_host.request_headers_to_add()) {
-    request_headers_to_add_.push_back(makeHeaderToAdd(header_value_option));
   }
 
   for (const auto& route : virtual_host.routes()) {
@@ -799,18 +793,9 @@ ConfigImpl::ConfigImpl(const envoy::api::v2::RouteConfiguration& config, Runtime
     internal_only_headers_.push_back(Http::LowerCaseString(header));
   }
 
-  for (const auto& header_value_option : config.response_headers_to_add()) {
-    response_headers_to_add_.push_back(makeHeaderToAdd(header_value_option));
-  }
-
-  for (const std::string& header : config.response_headers_to_remove()) {
-    response_headers_to_remove_.push_back(Http::LowerCaseString(header));
-  }
-
-  for (const auto& header_value_option : config.request_headers_to_add()) {
-    request_headers_to_add_.push_back(makeHeaderToAdd(header_value_option));
-  }
   request_headers_parser_ = RequestHeaderParser::parse(config.request_headers_to_add());
+  response_headers_parser_ = ResponseHeaderParser::parse(config.response_headers_to_add(),
+                                                         config.response_headers_to_remove());
 }
 
 } // namespace Router

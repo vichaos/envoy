@@ -124,6 +124,48 @@ envoy::api::v2::Bootstrap parseBootstrapFromJson(const std::string& json_string)
   return bootstrap;
 }
 
+envoy::api::v2::Bootstrap parseBootstrapFromV2Yaml(const std::string& yaml) {
+  envoy::api::v2::Bootstrap bootstrap;
+  MessageUtil::loadFromYaml(yaml, bootstrap);
+  return bootstrap;
+}
+
+TEST_F(ClusterManagerImplTest, VersionInfoStatic) {
+  const std::string json = fmt::sprintf(
+      R"EOF(
+  {
+    %s
+  }
+  )EOF",
+      clustersJson({defaultStaticClusterJson("cluster_0")}));
+
+  create(parseBootstrapFromJson(json));
+  EXPECT_EQ("static", cluster_manager_->versionInfo());
+}
+
+TEST_F(ClusterManagerImplTest, VersionInfoDynamic) {
+  const std::string json = fmt::sprintf(
+      R"EOF(
+  {
+    "cds": {"cluster": %s},
+    %s
+  }
+  )EOF",
+      defaultStaticClusterJson("cds_cluster"),
+      clustersJson({defaultStaticClusterJson("cluster_0")}));
+
+  // Setup cds api in order to control returned version info string.
+  MockCdsApi* cds = new MockCdsApi();
+  EXPECT_CALL(factory_, createCds_()).WillOnce(Return(cds));
+  EXPECT_CALL(*cds, setInitializedCb(_));
+  EXPECT_CALL(*cds, initialize());
+
+  create(parseBootstrapFromJson(json));
+
+  EXPECT_CALL(*cds, versionInfo()).WillOnce(Return("version"));
+  EXPECT_EQ("version", cluster_manager_->versionInfo());
+}
+
 TEST_F(ClusterManagerImplTest, OutlierEventLog) {
   const std::string json = R"EOF(
   {
@@ -345,6 +387,48 @@ TEST_F(ClusterManagerImplTest, SubsetLoadBalancerRestriction) {
       "cluster: cluster type 'original_dst' may not be used with lb_subset_config");
 }
 
+TEST_F(ClusterManagerImplTest, RingHashLoadBalancerInitialization) {
+  const std::string json = R"EOF(
+  {
+    "clusters": [{
+      "name": "redis_cluster",
+      "lb_type": "ring_hash",
+      "ring_hash_lb_config": {
+        "minimum_ring_size": 125,
+        "use_std_hash": true
+      },
+      "connect_timeout_ms": 250,
+      "type": "static",
+      "hosts": [{"url": "tcp://127.0.0.1:8000"}, {"url": "tcp://127.0.0.1:8001"}]
+    }]
+  }
+  )EOF";
+  create(parseBootstrapFromJson(json));
+}
+
+TEST_F(ClusterManagerImplTest, RingHashLoadBalancerV2Initialization) {
+  const std::string yaml = R"EOF(
+  static_resources:
+    clusters:
+    - name: redis_cluster
+      connect_timeout: 0.250s
+      lb_policy: RING_HASH
+      hosts:
+      - socket_address:
+          address: 127.0.0.1
+          port_value: 8000
+      - socket_address:
+          address: 127.0.0.1
+          port_value: 8001
+      dns_lookup_family: V4_ONLY
+      ring_hash_lb_config:
+        minimum_ring_size: 125
+        deprecated_v1:
+          use_std_hash: true
+  )EOF";
+  create(parseBootstrapFromV2Yaml(yaml));
+}
+
 TEST_F(ClusterManagerImplTest, TcpHealthChecker) {
   const std::string json = R"EOF(
   {
@@ -461,8 +545,10 @@ TEST_F(ClusterManagerImplTest, ShutdownOrder) {
   const Cluster& cluster = cluster_manager_->clusters().begin()->second;
   EXPECT_EQ("cluster_1", cluster.info()->name());
   EXPECT_EQ(cluster.info(), cluster_manager_->get("cluster_1")->info());
-  EXPECT_EQ(1UL, cluster_manager_->get("cluster_1")->hostSet().hosts().size());
-  EXPECT_EQ(cluster.hosts()[0],
+  EXPECT_EQ(
+      1UL,
+      cluster_manager_->get("cluster_1")->prioritySet().hostSetsPerPriority()[0]->hosts().size());
+  EXPECT_EQ(cluster.prioritySet().hostSetsPerPriority()[0]->hosts()[0],
             cluster_manager_->get("cluster_1")->loadBalancer().chooseHost(nullptr));
 
   // Local reference, primary reference, thread local reference, host reference.
@@ -591,19 +677,21 @@ TEST_F(ClusterManagerImplTest, DynamicRemoveWithLocalCluster) {
 
   // Add another update callback on foo so we make sure callbacks keep working.
   ReadyWatcher membership_updated;
-  foo->addMemberUpdateCb([&membership_updated](const std::vector<HostSharedPtr>&,
-                                               const std::vector<HostSharedPtr>&) -> void {
-    membership_updated.ready();
-  });
+  foo->prioritySet().addMemberUpdateCb(
+      [&membership_updated](uint32_t, const std::vector<HostSharedPtr>&,
+                            const std::vector<HostSharedPtr>&) -> void {
+        membership_updated.ready();
+      });
 
   // Remove the new cluster.
   cluster_manager_->removePrimaryCluster("cluster1");
 
   // Fire a member callback on the local cluster, which should not call any update callbacks on
   // the deleted cluster.
-  foo->hosts_ = {makeTestHost(foo->info_, "tcp://127.0.0.1:80")};
+  foo->prioritySet().getMockHostSet(0)->hosts_ = {makeTestHost(foo->info_, "tcp://127.0.0.1:80")};
   EXPECT_CALL(membership_updated, ready());
-  foo->runCallbacks(foo->hosts_, {});
+  foo->prioritySet().getMockHostSet(0)->runCallbacks(foo->prioritySet().getMockHostSet(0)->hosts_,
+                                                     {});
 
   factory_.tls_.shutdownThread();
 
@@ -642,7 +730,8 @@ TEST_F(ClusterManagerImplTest, DynamicAddRemove) {
   update_cluster.mutable_per_connection_buffer_limit_bytes()->set_value(12345);
 
   std::shared_ptr<MockCluster> cluster2(new NiceMock<MockCluster>());
-  cluster2->hosts_ = {makeTestHost(cluster2->info_, "tcp://127.0.0.1:80")};
+  cluster2->prioritySet().getMockHostSet(0)->hosts_ = {
+      makeTestHost(cluster2->info_, "tcp://127.0.0.1:80")};
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster2));
   EXPECT_CALL(*cluster2, initializePhase()).Times(0);
   EXPECT_CALL(*cluster2, initialize(_));
@@ -712,7 +801,7 @@ TEST_F(ClusterManagerImplTest, CloseConnectionsOnHealthFailure) {
   std::shared_ptr<MockCluster> cluster1(new NiceMock<MockCluster>());
   cluster1->info_->name_ = "some_cluster";
   HostSharedPtr test_host = makeTestHost(cluster1->info_, "tcp://127.0.0.1:80");
-  cluster1->hosts_ = {test_host};
+  cluster1->prioritySet().getMockHostSet(0)->hosts_ = {test_host};
   ON_CALL(*cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
 
   MockHealthChecker health_checker;

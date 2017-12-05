@@ -291,6 +291,12 @@ public:
   virtual const std::string& clusterName() const PURE;
 
   /**
+   * Returns the HTTP status code to use when configured cluster is not found.
+   * @return Http::Code to use when configured cluster is not found.
+   */
+  virtual Http::Code clusterNotFoundResponseCode() const PURE;
+
+  /**
    * @return const CorsPolicy* the CORS policy for this virtual host.
    */
   virtual const CorsPolicy* corsPolicy() const PURE;
@@ -304,6 +310,14 @@ public:
    */
   virtual void finalizeRequestHeaders(Http::HeaderMap& headers,
                                       const AccessLog::RequestInfo& request_info) const PURE;
+
+  /**
+   * Do potentially destructive header transforms on response headers prior to forwarding. For
+   * adding or removing headers. This should only be called ONCE immediately after receiving an
+   * upstream's headers.
+   * @param headers supplies the response headers, which may be modified during this call.
+   */
+  virtual void finalizeResponseHeaders(Http::HeaderMap& headers) const PURE;
 
   /**
    * @return const HashPolicy* the optional hash policy for the route.
@@ -425,34 +439,6 @@ public:
 typedef std::shared_ptr<const Route> RouteConstSharedPtr;
 
 /**
- * Header to be added to a request or response.
- */
-struct HeaderAddition {
-  /**
-   * The name of the header to add.
-   */
-  const Http::LowerCaseString header_;
-
-  /**
-   * The value of the header to add.
-   */
-  const std::string value_;
-
-  /**
-   * Indicates whether the value should be appended to existing values for the header (true) or
-   * replace them (false).
-   */
-  const bool append_;
-
-  /**
-   * Equality comparison.
-   */
-  bool operator==(const HeaderAddition& rhs) const {
-    return header_ == rhs.header_ && value_ == rhs.value_ && append_ == rhs.append_;
-  }
-};
-
-/**
  * The router configuration.
  */
 class Config {
@@ -475,18 +461,6 @@ public:
    * (RFC1918) source.
    */
   virtual const std::list<Http::LowerCaseString>& internalOnlyHeaders() const PURE;
-
-  /**
-   * Return a list of header key/value pairs will be appended to or override every response that
-   * transits the router.
-   */
-  virtual const std::list<HeaderAddition>& responseHeadersToAdd() const PURE;
-
-  /**
-   * Return a list of upstream headers that will be stripped from every response that transits the
-   * router.
-   */
-  virtual const std::list<Http::LowerCaseString>& responseHeadersToRemove() const PURE;
 };
 
 typedef std::shared_ptr<const Config> ConfigConstSharedPtr;

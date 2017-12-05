@@ -226,7 +226,8 @@ Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool e
 
     callbacks_->requestInfo().setResponseFlag(AccessLog::ResponseFlag::NoRouteFound);
     Http::HeaderMapPtr response_headers{new Http::HeaderMapImpl{
-        {Http::Headers::get().Status, std::to_string(enumToInt(Http::Code::NotFound))}}};
+        {Http::Headers::get().Status,
+         std::to_string(enumToInt(route_entry_->clusterNotFoundResponseCode()))}}};
     callbacks_->encodeHeaders(std::move(response_headers), true);
     return Http::FilterHeadersStatus::StopIteration;
   }
@@ -318,7 +319,7 @@ Http::FilterDataStatus Filter::decodeData(Buffer::Instance& data, bool end_strea
   bool buffering = (retry_state_ && retry_state_->enabled()) || do_shadowing_;
   if (buffering && buffer_limit_ > 0 &&
       getLength(callbacks_->decodingBuffer()) + data.length() > buffer_limit_) {
-    // The request is larger than we should buffer.  Give up on the retry/shadow
+    // The request is larger than we should buffer. Give up on the retry/shadow
     cluster_->stats().retry_or_shadow_abandoned_.inc();
     retry_state_.reset();
     buffering = false;
@@ -500,7 +501,7 @@ void Filter::onUpstreamReset(UpstreamResetType type,
     // starting response, we treat this as an error. We only get non-5xx when
     // timeout_response_code_ is used for code above, where this member can
     // assume values such as 204 (NoContent).
-    if (!Http::CodeUtility::is5xx(enumToInt(code))) {
+    if (upstream_host != nullptr && !Http::CodeUtility::is5xx(enumToInt(code))) {
       upstream_host->stats().rq_error_.inc();
     }
     sendLocalReply(code, body, dropped);
@@ -601,6 +602,11 @@ void Filter::onUpstreamHeaders(const uint64_t response_code, Http::HeaderMapPtr&
   for (const auto& header_value : downstream_set_cookies_) {
     headers->addReferenceKey(Http::Headers::get().SetCookie, header_value);
   }
+
+  // TODO(zuercher): If access to response_headers_to_add (at any level) is ever needed outside
+  // Router::Filter we'll need to find a better location for this work. One possibility is to
+  // provide finalizeResponseHeaders functions on the Router::Config and VirtualHost interfaces.
+  route_entry_->finalizeResponseHeaders(*headers);
 
   downstream_response_started_ = true;
   if (end_stream) {
@@ -945,7 +951,7 @@ ProdFilter::createRetryState(const RetryPolicy& policy, Http::HeaderMap& request
 void Filter::UpstreamRequest::setRequestEncoder(Http::StreamEncoder& request_encoder) {
   request_encoder_ = &request_encoder;
   // Now that there is an encoder, have the connection manager inform the manager when the
-  // downstream buffers are overrun.  This may result in immediate watermark callbacks referencing
+  // downstream buffers are overrun. This may result in immediate watermark callbacks referencing
   // the encoder.
   parent_.callbacks_->addDownstreamWatermarkCallbacks(downstream_watermark_manager_);
 }
@@ -960,14 +966,14 @@ void Filter::UpstreamRequest::clearRequestEncoder() {
 
 void Filter::UpstreamRequest::DownstreamWatermarkManager::onAboveWriteBufferHighWatermark() {
   ASSERT(parent_.request_encoder_);
-  // The downstream connection is overrun.  Pause reads from upstream.
+  // The downstream connection is overrun. Pause reads from upstream.
   parent_.parent_.cluster_->stats().upstream_flow_control_paused_reading_total_.inc();
   parent_.request_encoder_->getStream().readDisable(true);
 }
 
 void Filter::UpstreamRequest::DownstreamWatermarkManager::onBelowWriteBufferLowWatermark() {
   ASSERT(parent_.request_encoder_);
-  // The downstream connection has buffer available.  Resume reads from upstream.
+  // The downstream connection has buffer available. Resume reads from upstream.
   parent_.parent_.cluster_->stats().upstream_flow_control_resumed_reading_total_.inc();
   parent_.request_encoder_->getStream().readDisable(false);
 }

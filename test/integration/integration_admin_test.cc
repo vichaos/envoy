@@ -119,11 +119,30 @@ TEST_P(IntegrationAdminTest, Admin) {
   Json::ObjectSharedPtr statsjson = Json::Factory::loadFromString(response->body());
   EXPECT_TRUE(statsjson->hasObject("stats"));
 
+  response = IntegrationUtil::makeSingleRequest(
+      lookupPort("admin"), "GET", "/stats?format=prometheus", "", downstreamProtocol(), version_);
+  EXPECT_TRUE(response->complete());
+  EXPECT_STREQ("200", response->headers().Status()->value().c_str());
+  EXPECT_THAT(response->body(),
+              testing::HasSubstr(
+                  "envoy_http_downstream_rq_xx{envoy_response_code_class=\"4\",envoy_http_conn_"
+                  "manager_prefix=\"admin\"} 2\n"));
+  EXPECT_THAT(response->body(), testing::HasSubstr("# TYPE envoy_http_downstream_rq_xx counter\n"));
+  EXPECT_THAT(response->body(),
+              testing::HasSubstr(
+                  "envoy_listener_admin_http_downstream_rq_xx{envoy_response_code_class=\"4\","
+                  "envoy_http_conn_manager_prefix=\"admin\"} 2\n"));
+  EXPECT_THAT(response->body(),
+              testing::HasSubstr("# TYPE envoy_cluster_upstream_cx_active gauge\n"));
+  EXPECT_THAT(
+      response->body(),
+      testing::HasSubstr("envoy_cluster_upstream_cx_active{envoy_cluster_name=\"cds\"} 0\n"));
   response = IntegrationUtil::makeSingleRequest(lookupPort("admin"), "GET", "/clusters", "",
                                                 downstreamProtocol(), version_);
   EXPECT_TRUE(response->complete());
   EXPECT_STREQ("200", response->headers().Status()->value().c_str());
   EXPECT_THAT(response->body(), testing::HasSubstr("added_via_api"));
+  EXPECT_THAT(response->body(), testing::HasSubstr("version_info::\n"));
 
   response = IntegrationUtil::makeSingleRequest(lookupPort("admin"), "GET", "/cpuprofiler", "",
                                                 downstreamProtocol(), version_);
