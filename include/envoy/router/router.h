@@ -309,15 +309,17 @@ public:
    * @param request_info holds additional information about the request.
    */
   virtual void finalizeRequestHeaders(Http::HeaderMap& headers,
-                                      const AccessLog::RequestInfo& request_info) const PURE;
+                                      const RequestInfo::RequestInfo& request_info) const PURE;
 
   /**
    * Do potentially destructive header transforms on response headers prior to forwarding. For
    * adding or removing headers. This should only be called ONCE immediately after receiving an
    * upstream's headers.
    * @param headers supplies the response headers, which may be modified during this call.
+   * @param request_info holds additional information about the request.
    */
-  virtual void finalizeResponseHeaders(Http::HeaderMap& headers) const PURE;
+  virtual void finalizeResponseHeaders(Http::HeaderMap& headers,
+                                       const RequestInfo::RequestInfo& request_info) const PURE;
 
   /**
    * @return const HashPolicy* the optional hash policy for the route.

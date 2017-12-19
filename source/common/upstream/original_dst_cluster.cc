@@ -19,12 +19,12 @@ namespace Upstream {
 // OriginalDstCluster::LoadBalancer is never configured with any other type of cluster,
 // and throws an exception otherwise.
 
-OriginalDstCluster::LoadBalancer::LoadBalancer(HostSet& host_set, ClusterSharedPtr& parent)
-    : host_set_(host_set), parent_(std::static_pointer_cast<OriginalDstCluster>(parent)),
+OriginalDstCluster::LoadBalancer::LoadBalancer(PrioritySet& priority_set, ClusterSharedPtr& parent)
+    : priority_set_(priority_set), parent_(std::static_pointer_cast<OriginalDstCluster>(parent)),
       info_(parent->info()) {
-  // host_set_ is initially empty.
-  host_set_.addMemberUpdateCb([this](uint32_t, const std::vector<HostSharedPtr>& hosts_added,
-                                     const std::vector<HostSharedPtr>& hosts_removed) -> void {
+  // priority_set_ is initially empty.
+  priority_set_.addMemberUpdateCb([this](uint32_t, const std::vector<HostSharedPtr>& hosts_added,
+                                         const std::vector<HostSharedPtr>& hosts_removed) -> void {
     // Update the hosts map
     for (const HostSharedPtr& host : hosts_removed) {
       ENVOY_LOG(debug, "Removing host {}.", host->address()->asString());
@@ -45,7 +45,7 @@ HostConstSharedPtr OriginalDstCluster::LoadBalancer::chooseHost(LoadBalancerCont
     // The local address of the downstream connection is the original destination address,
     // if usingOriginalDst() returns 'true'.
     if (connection && connection->usingOriginalDst()) {
-      const Network::Address::Instance& dst_addr = connection->localAddress();
+      const Network::Address::Instance& dst_addr = *connection->localAddress();
 
       // Check if a host with the destination address is already in the host set.
       HostSharedPtr host = host_map_.find(dst_addr);

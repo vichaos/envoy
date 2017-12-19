@@ -9,9 +9,9 @@
 #include "common/network/address_impl.h"
 #include "common/network/listen_socket_impl.h"
 #include "common/network/utility.h"
-#include "common/ssl/connection_impl.h"
 #include "common/ssl/context_config_impl.h"
 #include "common/ssl/context_impl.h"
+#include "common/ssl/ssl_socket.h"
 #include "common/stats/stats_impl.h"
 
 #include "test/common/ssl/ssl_certs_test.h"
@@ -140,14 +140,13 @@ const std::string testUtilV2(const envoy::api::v2::Listener& server_proto,
       *client_ctx, socket.localAddress(), Network::Address::InstanceConstSharedPtr());
 
   if (!client_session.empty()) {
-    Ssl::ConnectionImpl* ssl_connection =
-        dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-    SSL* client_ssl_connection = ssl_connection->rawSslForTest();
-    SSL_CTX* client_ssl_context = SSL_get_SSL_CTX(client_ssl_connection);
+    Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+    SSL* client_ssl_socket = ssl_socket->rawSslForTest();
+    SSL_CTX* client_ssl_context = SSL_get_SSL_CTX(client_ssl_socket);
     SSL_SESSION* client_ssl_session =
         SSL_SESSION_from_bytes(reinterpret_cast<const uint8_t*>(client_session.data()),
                                client_session.size(), client_ssl_context);
-    int rc = SSL_set_session(client_ssl_connection, client_ssl_session);
+    int rc = SSL_set_session(client_ssl_socket, client_ssl_session);
     ASSERT(rc == 1);
     UNREFERENCED_PARAMETER(rc);
     SSL_SESSION_free(client_ssl_session);
@@ -176,13 +175,12 @@ const std::string testUtilV2(const envoy::api::v2::Listener& server_proto,
         EXPECT_EQ(expected_alpn_protocol, client_connection->nextProtocol());
       }
       EXPECT_EQ(expected_client_cert_uri, server_connection->ssl()->uriSanPeerCertificate());
-      Ssl::ConnectionImpl* ssl_connection =
-          dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-      SSL* client_ssl_connection = ssl_connection->rawSslForTest();
+      Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+      SSL* client_ssl_socket = ssl_socket->rawSslForTest();
       if (!expected_protocol_version.empty()) {
-        EXPECT_EQ(expected_protocol_version, SSL_get_version(client_ssl_connection));
+        EXPECT_EQ(expected_protocol_version, SSL_get_version(client_ssl_socket));
       }
-      SSL_SESSION* client_ssl_session = SSL_get_session(client_ssl_connection);
+      SSL_SESSION* client_ssl_session = SSL_get_session(client_ssl_socket);
       EXPECT_FALSE(client_ssl_session->not_resumable);
       uint8_t* session_data;
       size_t session_len;
@@ -224,13 +222,13 @@ const std::string testUtilV2(const envoy::api::v2::Listener& server_proto,
 
 } // namespace
 
-class SslConnectionImplTest : public SslCertsTest,
-                              public testing::WithParamInterface<Network::Address::IpVersion> {};
+class SslSocketTest : public SslCertsTest,
+                      public testing::WithParamInterface<Network::Address::IpVersion> {};
 
-INSTANTIATE_TEST_CASE_P(IpVersions, SslConnectionImplTest,
+INSTANTIATE_TEST_CASE_P(IpVersions, SslSocketTest,
                         testing::ValuesIn(TestEnvironment::getIpVersionsForTest()));
 
-TEST_P(SslConnectionImplTest, GetCertDigest) {
+TEST_P(SslSocketTest, GetCertDigest) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/no_san_cert.pem",
@@ -251,7 +249,7 @@ TEST_P(SslConnectionImplTest, GetCertDigest) {
            true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, GetCertDigestServerCertWithoutCommonName) {
+TEST_P(SslSocketTest, GetCertDigestServerCertWithoutCommonName) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/no_san_cert.pem",
@@ -272,7 +270,7 @@ TEST_P(SslConnectionImplTest, GetCertDigestServerCertWithoutCommonName) {
            true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, GetUriWithUriSan) {
+TEST_P(SslSocketTest, GetUriWithUriSan) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/san_uri_cert.pem",
@@ -293,7 +291,7 @@ TEST_P(SslConnectionImplTest, GetUriWithUriSan) {
            true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, GetNoUriWithDnsSan) {
+TEST_P(SslSocketTest, GetNoUriWithDnsSan) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem",
@@ -313,31 +311,21 @@ TEST_P(SslConnectionImplTest, GetNoUriWithDnsSan) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.handshake", true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, NoCert) {
-  std::string client_ctx_json = R"EOF(
-  {
-    "cert_chain_file": "",
-    "private_key_file": ""
-  })EOF";
+TEST_P(SslSocketTest, NoCert) {
+  std::string client_ctx_json = "{}";
 
   std::string server_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_tmpdir }}/unittestcert.pem",
-    "private_key_file": "{{ test_tmpdir }}/unittestkey.pem",
-    "ca_cert_file": ""
+    "private_key_file": "{{ test_tmpdir }}/unittestkey.pem"
   }
   )EOF";
 
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.no_certificate", true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthCaVerificationNoClientCert) {
-  std::string client_ctx_json = R"EOF(
-  {
-    "cert_chain_file": "",
-    "private_key_file": ""
-  }
-  )EOF";
+TEST_P(SslSocketTest, FailedClientAuthCaVerificationNoClientCert) {
+  std::string client_ctx_json = "{}";
 
   std::string server_ctx_json = R"EOF(
   {
@@ -351,7 +339,7 @@ TEST_P(SslConnectionImplTest, FailedClientAuthCaVerificationNoClientCert) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.fail_verify_no_cert", false, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthCaVerification) {
+TEST_P(SslSocketTest, FailedClientAuthCaVerification) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/selfsigned_cert.pem",
@@ -370,13 +358,8 @@ TEST_P(SslConnectionImplTest, FailedClientAuthCaVerification) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.fail_verify_error", false, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthSanVerificationNoClientCert) {
-  std::string client_ctx_json = R"EOF(
-  {
-    "cert_chain_file": "",
-    "private_key_file": ""
-  }
-  )EOF";
+TEST_P(SslSocketTest, FailedClientAuthSanVerificationNoClientCert) {
+  std::string client_ctx_json = "{}";
 
   std::string server_ctx_json = R"EOF(
   {
@@ -390,7 +373,7 @@ TEST_P(SslConnectionImplTest, FailedClientAuthSanVerificationNoClientCert) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.fail_verify_no_cert", false, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthSanVerification) {
+TEST_P(SslSocketTest, FailedClientAuthSanVerification) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/no_san_cert.pem",
@@ -410,13 +393,8 @@ TEST_P(SslConnectionImplTest, FailedClientAuthSanVerification) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.fail_verify_san", false, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthHashVerificationNoClientCert) {
-  std::string client_ctx_json = R"EOF(
-  {
-    "cert_chain_file": "",
-    "private_key_file": ""
-  }
-  )EOF";
+TEST_P(SslSocketTest, FailedClientAuthHashVerificationNoClientCert) {
+  std::string client_ctx_json = "{}";
 
   std::string server_ctx_json = R"EOF(
   {
@@ -430,7 +408,7 @@ TEST_P(SslConnectionImplTest, FailedClientAuthHashVerificationNoClientCert) {
   testUtil(client_ctx_json, server_ctx_json, "", "", "ssl.fail_verify_no_cert", false, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, FailedClientAuthHashVerification) {
+TEST_P(SslSocketTest, FailedClientAuthHashVerification) {
   std::string client_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/no_san_cert.pem",
@@ -453,7 +431,7 @@ TEST_P(SslConnectionImplTest, FailedClientAuthHashVerification) {
 
 // Make sure that we do not flush code and do an immediate close if we have not completed the
 // handshake.
-TEST_P(SslConnectionImplTest, FlushCloseDuringHandshake) {
+TEST_P(SslSocketTest, FlushCloseDuringHandshake) {
   Stats::IsolatedStoreImpl stats_store;
   Runtime::MockLoader runtime;
 
@@ -504,7 +482,7 @@ TEST_P(SslConnectionImplTest, FlushCloseDuringHandshake) {
   dispatcher.run(Event::Dispatcher::RunType::Block);
 }
 
-TEST_P(SslConnectionImplTest, ClientAuthMultipleCAs) {
+TEST_P(SslSocketTest, ClientAuthMultipleCAs) {
   Stats::IsolatedStoreImpl stats_store;
   Runtime::MockLoader runtime;
 
@@ -544,9 +522,8 @@ TEST_P(SslConnectionImplTest, ClientAuthMultipleCAs) {
       *client_ctx, socket.localAddress(), Network::Address::InstanceConstSharedPtr());
 
   // Verify that server sent list with 2 acceptable client certificate CA names.
-  Ssl::ConnectionImpl* ssl_connection =
-      dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-  SSL_set_cert_cb(ssl_connection->rawSslForTest(),
+  Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+  SSL_set_cert_cb(ssl_socket->rawSslForTest(),
                   [](SSL* ssl, void*) -> int {
                     STACK_OF(X509_NAME)* list = SSL_get_client_CA_list(ssl);
                     EXPECT_NE(nullptr, list);
@@ -628,9 +605,8 @@ void testTicketSessionResumption(const std::string& server_ctx_json1,
 
   EXPECT_CALL(client_connection_callbacks, onEvent(Network::ConnectionEvent::Connected))
       .WillOnce(Invoke([&](Network::ConnectionEvent) -> void {
-        Ssl::ConnectionImpl* ssl_connection =
-            dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-        ssl_session = SSL_get1_session(ssl_connection->rawSslForTest());
+        Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+        ssl_session = SSL_get1_session(ssl_socket->rawSslForTest());
         EXPECT_FALSE(ssl_session->not_resumable);
         client_connection->close(Network::ConnectionCloseType::NoFlush);
         server_connection->close(Network::ConnectionCloseType::NoFlush);
@@ -645,9 +621,8 @@ void testTicketSessionResumption(const std::string& server_ctx_json1,
   client_connection = dispatcher.createSslClientConnection(
       *client_ctx, socket2.localAddress(), Network::Address::InstanceConstSharedPtr());
   client_connection->addConnectionCallbacks(client_connection_callbacks);
-  Ssl::ConnectionImpl* ssl_connection =
-      dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-  SSL_set_session(ssl_connection->rawSslForTest(), ssl_session);
+  Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+  SSL_set_session(ssl_socket->rawSslForTest(), ssl_session);
   SSL_SESSION_free(ssl_session);
 
   client_connection->connect();
@@ -685,7 +660,7 @@ void testTicketSessionResumption(const std::string& server_ctx_json1,
 }
 } // namespace
 
-TEST_P(SslConnectionImplTest, TicketSessionResumption) {
+TEST_P(SslSocketTest, TicketSessionResumption) {
   std::string server_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_tmpdir }}/unittestcert.pem",
@@ -702,7 +677,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumption) {
   testTicketSessionResumption(server_ctx_json, server_ctx_json, client_ctx_json, true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, TicketSessionResumptionWithClientCA) {
+TEST_P(SslSocketTest, TicketSessionResumptionWithClientCA) {
   std::string server_ctx_json = R"EOF(
   {
     "cert_chain_file": "{{ test_tmpdir }}/unittestcert.pem",
@@ -722,7 +697,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumptionWithClientCA) {
   testTicketSessionResumption(server_ctx_json, server_ctx_json, client_ctx_json, true, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, TicketSessionResumptionRotateKey) {
+TEST_P(SslSocketTest, TicketSessionResumptionRotateKey) {
   std::string server_ctx_json1 = R"EOF(
   {
     "cert_chain_file": "{{ test_tmpdir }}/unittestcert.pem",
@@ -753,7 +728,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumptionRotateKey) {
                               GetParam());
 }
 
-TEST_P(SslConnectionImplTest, TicketSessionResumptionWrongKey) {
+TEST_P(SslSocketTest, TicketSessionResumptionWrongKey) {
   std::string server_ctx_json1 = R"EOF(
   {
     "cert_chain_file": "{{ test_tmpdir }}/unittestcert.pem",
@@ -785,7 +760,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumptionWrongKey) {
 
 // Sessions can be resumed because the server certificates are different but the CN/SANs and
 // issuer are identical
-TEST_P(SslConnectionImplTest, TicketSessionResumptionDifferentServerCert) {
+TEST_P(SslSocketTest, TicketSessionResumptionDifferentServerCert) {
   std::string server_ctx_json1 = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem",
@@ -817,7 +792,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumptionDifferentServerCert) {
 
 // Sessions cannot be resumed because the server certificates are different and the SANs
 // are not identical
-TEST_P(SslConnectionImplTest, TicketSessionResumptionDifferentServerCertDifferentSAN) {
+TEST_P(SslSocketTest, TicketSessionResumptionDifferentServerCertDifferentSAN) {
   std::string server_ctx_json1 = R"EOF(
   {
     "cert_chain_file": "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem",
@@ -849,7 +824,7 @@ TEST_P(SslConnectionImplTest, TicketSessionResumptionDifferentServerCertDifferen
 
 // Test that if two listeners use the same cert and session ticket key, but
 // different client CA, that sessions cannot be resumed.
-TEST_P(SslConnectionImplTest, ClientAuthCrossListenerSessionResumption) {
+TEST_P(SslSocketTest, ClientAuthCrossListenerSessionResumption) {
   Stats::IsolatedStoreImpl stats_store;
   Runtime::MockLoader runtime;
 
@@ -925,9 +900,8 @@ TEST_P(SslConnectionImplTest, ClientAuthCrossListenerSessionResumption) {
   EXPECT_CALL(server_connection_callbacks, onEvent(Network::ConnectionEvent::LocalClose));
   EXPECT_CALL(client_connection_callbacks, onEvent(Network::ConnectionEvent::Connected))
       .WillOnce(Invoke([&](Network::ConnectionEvent) -> void {
-        Ssl::ConnectionImpl* ssl_connection =
-            dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-        ssl_session = SSL_get1_session(ssl_connection->rawSslForTest());
+        Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+        ssl_session = SSL_get1_session(ssl_socket->rawSslForTest());
         EXPECT_FALSE(ssl_session->not_resumable);
         server_connection->close(Network::ConnectionCloseType::NoFlush);
         client_connection->close(Network::ConnectionCloseType::NoFlush);
@@ -943,9 +917,8 @@ TEST_P(SslConnectionImplTest, ClientAuthCrossListenerSessionResumption) {
   client_connection = dispatcher.createSslClientConnection(
       *client_ctx, socket2.localAddress(), Network::Address::InstanceConstSharedPtr());
   client_connection->addConnectionCallbacks(client_connection_callbacks);
-  Ssl::ConnectionImpl* ssl_connection =
-      dynamic_cast<Ssl::ConnectionImpl*>(client_connection->ssl());
-  SSL_set_session(ssl_connection->rawSslForTest(), ssl_session);
+  Ssl::SslSocket* ssl_socket = dynamic_cast<Ssl::SslSocket*>(client_connection->ssl());
+  SSL_set_session(ssl_socket->rawSslForTest(), ssl_session);
   SSL_SESSION_free(ssl_session);
 
   client_connection->connect();
@@ -965,7 +938,7 @@ TEST_P(SslConnectionImplTest, ClientAuthCrossListenerSessionResumption) {
   EXPECT_EQ(0UL, stats_store.counter("ssl.session_reused").value());
 }
 
-TEST_P(SslConnectionImplTest, SslError) {
+TEST_P(SslSocketTest, SslError) {
   Stats::IsolatedStoreImpl stats_store;
   Runtime::MockLoader runtime;
 
@@ -1017,7 +990,7 @@ TEST_P(SslConnectionImplTest, SslError) {
   EXPECT_EQ(1UL, stats_store.counter("ssl.connection_error").value());
 }
 
-TEST_P(SslConnectionImplTest, ProtocolVersions) {
+TEST_P(SslSocketTest, ProtocolVersions) {
   envoy::api::v2::Listener listener;
   envoy::api::v2::FilterChain* filter_chain = listener.add_filter_chains();
   envoy::api::v2::TlsCertificate* server_cert =
@@ -1099,7 +1072,7 @@ TEST_P(SslConnectionImplTest, ProtocolVersions) {
   testUtilV2(listener, client_ctx, "", true, "TLSv1.3", "", "", "", "ssl.handshake", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniCertificate) {
+TEST_P(SslSocketTest, SniCertificate) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com
@@ -1174,7 +1147,7 @@ TEST_P(SslConnectionImplTest, SniCertificate) {
              "ssl.handshake", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniSessionResumption) {
+TEST_P(SslSocketTest, SniSessionResumption) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com, *
@@ -1253,7 +1226,7 @@ TEST_P(SslConnectionImplTest, SniSessionResumption) {
              "ssl.session_reused", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniClientCertificate) {
+TEST_P(SslSocketTest, SniClientCertificate) {
   envoy::api::v2::Listener listener;
 
   // san_multiple_dns_cert.pem: *.example.com
@@ -1328,7 +1301,7 @@ TEST_P(SslConnectionImplTest, SniClientCertificate) {
              "ssl.no_certificate", 1, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniALPN) {
+TEST_P(SslSocketTest, SniALPN) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com
@@ -1378,7 +1351,7 @@ TEST_P(SslConnectionImplTest, SniALPN) {
              "ssl.handshake", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniCipherSuites) {
+TEST_P(SslSocketTest, SniCipherSuites) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com
@@ -1441,7 +1414,7 @@ TEST_P(SslConnectionImplTest, SniCipherSuites) {
              "ssl.handshake", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniEcdhCurves) {
+TEST_P(SslSocketTest, SniEcdhCurves) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com
@@ -1504,7 +1477,7 @@ TEST_P(SslConnectionImplTest, SniEcdhCurves) {
              "ssl.handshake", 2, GetParam());
 }
 
-TEST_P(SslConnectionImplTest, SniProtocolVersions) {
+TEST_P(SslSocketTest, SniProtocolVersions) {
   envoy::api::v2::Listener listener;
 
   // san_dns_cert.pem: server1.example.com
@@ -1805,7 +1778,7 @@ TEST_P(SslReadBufferLimitTest, TestBind) {
       .WillOnce(Invoke([&](Network::ConnectionEvent) -> void { dispatcher_->exit(); }));
   dispatcher_->run(Event::Dispatcher::RunType::Block);
 
-  EXPECT_EQ(address_string, server_connection_->remoteAddress().ip()->addressAsString());
+  EXPECT_EQ(address_string, server_connection_->remoteAddress()->ip()->addressAsString());
 
   disconnect();
 }

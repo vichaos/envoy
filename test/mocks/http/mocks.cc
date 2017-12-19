@@ -74,7 +74,6 @@ template <class T> static void initializeMockStreamFilterCallbacks(T& callbacks)
   ON_CALL(callbacks, dispatcher()).WillByDefault(ReturnRef(callbacks.dispatcher_));
   ON_CALL(callbacks, requestInfo()).WillByDefault(ReturnRef(callbacks.request_info_));
   ON_CALL(callbacks, route()).WillByDefault(Return(callbacks.route_));
-  ON_CALL(callbacks, downstreamAddress()).WillByDefault(ReturnRef(callbacks.downstream_address_));
 }
 
 MockStreamDecoderFilterCallbacks::MockStreamDecoderFilterCallbacks() {
@@ -92,6 +91,7 @@ MockStreamDecoderFilterCallbacks::MockStreamDecoderFilterCallbacks() {
       }));
 
   ON_CALL(*this, activeSpan()).WillByDefault(ReturnRef(active_span_));
+  ON_CALL(*this, tracingConfig()).WillByDefault(ReturnRef(tracing_config_));
 }
 
 MockStreamDecoderFilterCallbacks::~MockStreamDecoderFilterCallbacks() {}
@@ -100,6 +100,7 @@ MockStreamEncoderFilterCallbacks::MockStreamEncoderFilterCallbacks() {
   initializeMockStreamFilterCallbacks(*this);
   ON_CALL(*this, encodingBuffer()).WillByDefault(Invoke(&buffer_, &Buffer::InstancePtr::get));
   ON_CALL(*this, activeSpan()).WillByDefault(ReturnRef(active_span_));
+  ON_CALL(*this, tracingConfig()).WillByDefault(ReturnRef(tracing_config_));
 }
 
 MockStreamEncoderFilterCallbacks::~MockStreamEncoderFilterCallbacks() {}

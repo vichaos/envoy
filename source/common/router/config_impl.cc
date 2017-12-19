@@ -233,9 +233,9 @@ RouteEntryImplBase::RouteEntryImplBase(const VirtualHostImpl& vhost,
       path_redirect_(route.redirect().path_redirect()), retry_policy_(route.route()),
       rate_limit_policy_(route.route().rate_limits()), shadow_policy_(route.route()),
       priority_(ConfigUtility::parsePriority(route.route().priority())),
-      request_headers_parser_(RequestHeaderParser::parse(route.route().request_headers_to_add())),
-      response_headers_parser_(ResponseHeaderParser::parse(
-          route.route().response_headers_to_add(), route.route().response_headers_to_remove())),
+      request_headers_parser_(HeaderParser::configure(route.route().request_headers_to_add())),
+      response_headers_parser_(HeaderParser::configure(route.route().response_headers_to_add(),
+                                                       route.route().response_headers_to_remove())),
       opaque_config_(parseOpaqueConfig(route)), decorator_(parseDecorator(route)),
       redirect_response_code_(
           ConfigUtility::parseRedirectResponseCode(route.redirect().response_code())) {
@@ -321,23 +321,24 @@ bool RouteEntryImplBase::matchRoute(const Http::HeaderMap& headers, uint64_t ran
 
 const std::string& RouteEntryImplBase::clusterName() const { return cluster_name_; }
 
-void RouteEntryImplBase::finalizeRequestHeaders(Http::HeaderMap& headers,
-                                                const AccessLog::RequestInfo& request_info) const {
+void RouteEntryImplBase::finalizeRequestHeaders(
+    Http::HeaderMap& headers, const RequestInfo::RequestInfo& request_info) const {
   // Append user-specified request headers in the following order: route-level headers,
   // virtual host level headers and finally global connection manager level headers.
-  request_headers_parser_->evaluateRequestHeaders(headers, request_info);
-  vhost_.requestHeaderParser().evaluateRequestHeaders(headers, request_info);
-  vhost_.globalRouteConfig().requestHeaderParser().evaluateRequestHeaders(headers, request_info);
+  request_headers_parser_->evaluateHeaders(headers, request_info);
+  vhost_.requestHeaderParser().evaluateHeaders(headers, request_info);
+  vhost_.globalRouteConfig().requestHeaderParser().evaluateHeaders(headers, request_info);
   if (host_rewrite_.empty()) {
     return;
   }
   headers.Host()->value(host_rewrite_);
 }
 
-void RouteEntryImplBase::finalizeResponseHeaders(Http::HeaderMap& headers) const {
-  response_headers_parser_->evaluateResponseHeaders(headers);
-  vhost_.responseHeaderParser().evaluateResponseHeaders(headers);
-  vhost_.globalRouteConfig().responseHeaderParser().evaluateResponseHeaders(headers);
+void RouteEntryImplBase::finalizeResponseHeaders(
+    Http::HeaderMap& headers, const RequestInfo::RequestInfo& request_info) const {
+  response_headers_parser_->evaluateHeaders(headers, request_info);
+  vhost_.responseHeaderParser().evaluateHeaders(headers, request_info);
+  vhost_.globalRouteConfig().responseHeaderParser().evaluateHeaders(headers, request_info);
 }
 
 Optional<RouteEntryImplBase::RuntimeData>
@@ -509,7 +510,7 @@ PrefixRouteEntryImpl::PrefixRouteEntryImpl(const VirtualHostImpl& vhost,
     : RouteEntryImplBase(vhost, route, loader), prefix_(route.match().prefix()) {}
 
 void PrefixRouteEntryImpl::finalizeRequestHeaders(
-    Http::HeaderMap& headers, const AccessLog::RequestInfo& request_info) const {
+    Http::HeaderMap& headers, const RequestInfo::RequestInfo& request_info) const {
   RouteEntryImplBase::finalizeRequestHeaders(headers, request_info);
 
   finalizePathHeader(headers, prefix_);
@@ -528,8 +529,8 @@ PathRouteEntryImpl::PathRouteEntryImpl(const VirtualHostImpl& vhost,
                                        const envoy::api::v2::Route& route, Runtime::Loader& loader)
     : RouteEntryImplBase(vhost, route, loader), path_(route.match().path()) {}
 
-void PathRouteEntryImpl::finalizeRequestHeaders(Http::HeaderMap& headers,
-                                                const AccessLog::RequestInfo& request_info) const {
+void PathRouteEntryImpl::finalizeRequestHeaders(
+    Http::HeaderMap& headers, const RequestInfo::RequestInfo& request_info) const {
   RouteEntryImplBase::finalizeRequestHeaders(headers, request_info);
 
   finalizePathHeader(headers, path_);
@@ -569,8 +570,8 @@ RegexRouteEntryImpl::RegexRouteEntryImpl(const VirtualHostImpl& vhost,
     : RouteEntryImplBase(vhost, route, loader),
       regex_(std::regex{route.match().regex().c_str(), std::regex::optimize}) {}
 
-void RegexRouteEntryImpl::finalizeRequestHeaders(Http::HeaderMap& headers,
-                                                 const AccessLog::RequestInfo& request_info) const {
+void RegexRouteEntryImpl::finalizeRequestHeaders(
+    Http::HeaderMap& headers, const RequestInfo::RequestInfo& request_info) const {
   RouteEntryImplBase::finalizeRequestHeaders(headers, request_info);
 
   const Http::HeaderString& path = headers.Path()->value();
@@ -597,9 +598,9 @@ VirtualHostImpl::VirtualHostImpl(const envoy::api::v2::VirtualHost& virtual_host
                                  Upstream::ClusterManager& cm, bool validate_clusters)
     : name_(virtual_host.name()), rate_limit_policy_(virtual_host.rate_limits()),
       global_route_config_(global_route_config),
-      request_headers_parser_(RequestHeaderParser::parse(virtual_host.request_headers_to_add())),
-      response_headers_parser_(ResponseHeaderParser::parse(
-          virtual_host.response_headers_to_add(), virtual_host.response_headers_to_remove())) {
+      request_headers_parser_(HeaderParser::configure(virtual_host.request_headers_to_add())),
+      response_headers_parser_(HeaderParser::configure(virtual_host.response_headers_to_add(),
+                                                       virtual_host.response_headers_to_remove())) {
   switch (virtual_host.require_tls()) {
   case envoy::api::v2::VirtualHost::NONE:
     ssl_requirements_ = SslRequirements::NONE;
@@ -793,9 +794,9 @@ ConfigImpl::ConfigImpl(const envoy::api::v2::RouteConfiguration& config, Runtime
     internal_only_headers_.push_back(Http::LowerCaseString(header));
   }
 
-  request_headers_parser_ = RequestHeaderParser::parse(config.request_headers_to_add());
-  response_headers_parser_ = ResponseHeaderParser::parse(config.response_headers_to_add(),
-                                                         config.response_headers_to_remove());
+  request_headers_parser_ = HeaderParser::configure(config.request_headers_to_add());
+  response_headers_parser_ = HeaderParser::configure(config.response_headers_to_add(),
+                                                     config.response_headers_to_remove());
 }
 
 } // namespace Router

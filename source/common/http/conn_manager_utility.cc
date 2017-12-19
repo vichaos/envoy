@@ -16,7 +16,7 @@
 namespace Envoy {
 namespace Http {
 
-void ConnectionManagerUtility::mutateRequestHeaders(
+Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequestHeaders(
     Http::HeaderMap& request_headers, Protocol protocol, Network::Connection& connection,
     ConnectionManagerConfig& config, const Router::Config& route_config,
     Runtime::RandomGenerator& random, Runtime::Loader& runtime,
@@ -48,14 +48,24 @@ void ConnectionManagerUtility::mutateRequestHeaders(
   // If we are "using remote address" this means that we create/append to XFF with our immediate
   // peer. Cases where we don't "use remote address" include trusted double proxy where we expect
   // our peer to have already properly set XFF, etc.
+  Network::Address::InstanceConstSharedPtr final_remote_address;
   if (config.useRemoteAddress()) {
-    if (Network::Utility::isLoopbackAddress(connection.remoteAddress())) {
+    final_remote_address = connection.remoteAddress();
+    if (Network::Utility::isLoopbackAddress(*connection.remoteAddress())) {
       Utility::appendXff(request_headers, config.localAddress());
     } else {
-      Utility::appendXff(request_headers, connection.remoteAddress());
+      Utility::appendXff(request_headers, *connection.remoteAddress());
     }
     request_headers.insertForwardedProto().value().setReference(
         connection.ssl() ? Headers::get().SchemeValues.Https : Headers::get().SchemeValues.Http);
+  } else {
+    // If we are not using remote address, attempt to pull a valid IPv4 or IPv6 address out of XFF.
+    // If we find one, use it. Otherwise just use real connection's remote address for logging and
+    // internal/external calculations.
+    final_remote_address = Utility::getLastAddressFromXFF(request_headers);
+    if (final_remote_address == nullptr) {
+      final_remote_address = connection.remoteAddress();
+    }
   }
 
   // If we didn't already replace x-forwarded-proto because we are using the remote address, and
@@ -67,7 +77,7 @@ void ConnectionManagerUtility::mutateRequestHeaders(
 
   // At this point we can determine whether this is an internal or external request. This is done
   // via XFF, which was set above or we trust.
-  bool internal_request = Utility::isInternalRequest(request_headers);
+  bool internal_request = Network::Utility::isInternalAddress(*final_remote_address);
 
   // Edge request is the request from external clients to front Envoy.
   // Request from front Envoy to the internal service will be treated as not edge request.
@@ -115,9 +125,9 @@ void ConnectionManagerUtility::mutateRequestHeaders(
 
   // If we are an external request, AND we are "using remote address" (see above), we set
   // x-envoy-external-address since this is our first ingress point into the trusted network.
-  if (edge_request && connection.remoteAddress().type() == Network::Address::Type::Ip) {
+  if (edge_request && connection.remoteAddress()->type() == Network::Address::Type::Ip) {
     request_headers.insertEnvoyExternalAddress().value(
-        connection.remoteAddress().ip()->addressAsString());
+        connection.remoteAddress()->ip()->addressAsString());
   }
 
   // Generate x-request-id for all edge requests, or if there is none.
@@ -132,6 +142,8 @@ void ConnectionManagerUtility::mutateRequestHeaders(
     Tracing::HttpTracerUtility::mutateHeaders(request_headers, runtime);
   }
   mutateXfccRequestHeader(request_headers, connection, config);
+
+  return final_remote_address;
 }
 
 void ConnectionManagerUtility::mutateXfccRequestHeader(Http::HeaderMap& request_headers,

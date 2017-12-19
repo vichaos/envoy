@@ -191,6 +191,18 @@ public:
     runUpdateCallbacks(hosts_added, hosts_removed);
   }
 
+  /**
+   * Install a callback that will be invoked when the host set membership changes.
+   * @param callback supplies the callback to invoke.
+   * @return Common::CallbackHandle* the callback handle.
+   */
+  typedef std::function<void(uint32_t priority, const std::vector<HostSharedPtr>& hosts_added,
+                             const std::vector<HostSharedPtr>& hosts_removed)>
+      MemberUpdateCb;
+  Common::CallbackHandle* addMemberUpdateCb(MemberUpdateCb callback) const {
+    return member_update_cb_helper_.add(callback);
+  }
+
   // Upstream::HostSet
   const std::vector<HostSharedPtr>& hosts() const override { return *hosts_; }
   const std::vector<HostSharedPtr>& healthyHosts() const override { return *healthy_hosts_; }
@@ -199,9 +211,6 @@ public:
   }
   const std::vector<std::vector<HostSharedPtr>>& healthyHostsPerLocality() const override {
     return *healthy_hosts_per_locality_;
-  }
-  Common::CallbackHandle* addMemberUpdateCb(MemberUpdateCb callback) const override {
-    return member_update_cb_helper_.add(callback);
   }
   uint32_t priority() const override { return priority_; }
 
@@ -231,8 +240,6 @@ typedef std::unique_ptr<HostSetImpl> HostSetImplPtr;
 
 class PrioritySetImpl : public PrioritySet {
 public:
-  PrioritySetImpl();
-
   // From PrioritySet
   Common::CallbackHandle* addMemberUpdateCb(MemberUpdateCb callback) const override {
     return member_update_cb_helper_.add(callback);
@@ -244,12 +251,18 @@ public:
   // Get the host set for this priority level, creating it if necessary.
   HostSet& getOrCreateHostSet(uint32_t priority);
 
+protected:
+  // Allows subclasses of PrioritySetImpl to create their own type of HostSetImpl.
+  virtual HostSetImplPtr createHostSet(uint32_t priority) {
+    return HostSetImplPtr{new HostSetImpl(priority)};
+  }
+
 private:
   virtual void runUpdateCallbacks(uint32_t priority, const std::vector<HostSharedPtr>& hosts_added,
                                   const std::vector<HostSharedPtr>& hosts_removed) {
     member_update_cb_helper_.runCallbacks(priority, hosts_added, hosts_removed);
   }
-  // This vector will always have at lest one member, for priority level 0.
+  // This vector will generally have at least one member, for priority level 0.
   // It will expand as host sets are added but currently does not shrink to
   // avoid any potential lifetime issues.
   std::vector<std::unique_ptr<HostSet>> host_sets_;

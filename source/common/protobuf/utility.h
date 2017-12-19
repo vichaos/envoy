@@ -72,7 +72,7 @@ public:
 
   // Based on MessageUtil::hash() defined below.
   template <class ProtoType>
-  static std::size_t hash(const google::protobuf::RepeatedPtrField<ProtoType>& source) {
+  static std::size_t hash(const Protobuf::RepeatedPtrField<ProtoType>& source) {
     // Use Protobuf::io::CodedOutputStream to force deterministic serialization, so that the same
     // message doesn't hash to different values.
     ProtobufTypes::String text;
@@ -118,6 +118,8 @@ public:
 
   /**
    * Validate protoc-gen-validate constraints on a given protobuf.
+   * Note the corresponding `.pb.validate.h` for the message has to be included in the source file
+   * of caller.
    * @param message message to validate.
    * @throw ProtoValidationException if the message does not satisfy its type constraints.
    */
@@ -136,6 +138,8 @@ public:
 
   /**
    * Downcast and validate protoc-gen-validate constraints on a given protobuf.
+   * Note the corresponding `.pb.validate.h` for the message has to be included in the source file
+   * of caller.
    * @param message const Protobuf::Message& to downcast and validate.
    * @return const MessageType& the concrete message type downcasted to on success.
    * @throw ProtoValidationException if the message does not satisfy its type constraints.

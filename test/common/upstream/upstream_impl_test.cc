@@ -659,6 +659,7 @@ TEST(StaticClusterImplTest, SourceAddressPriority) {
 // Test creating and extending a priority set.
 TEST(PrioritySet, Extend) {
   PrioritySetImpl priority_set;
+  priority_set.getOrCreateHostSet(0);
 
   uint32_t changes = 0;
   uint32_t last_priority = 0;
@@ -678,8 +679,9 @@ TEST(PrioritySet, Extend) {
   EXPECT_EQ(0, changes);
   EXPECT_EQ(0, priority_set.getOrCreateHostSet(2).hosts().size());
   EXPECT_EQ(3, priority_set.hostSetsPerPriority().size());
-  EXPECT_EQ(2, changes);
-  EXPECT_EQ(last_priority, 2);
+  // No-op host set creation does not trigger callbacks.
+  EXPECT_EQ(0, changes);
+  EXPECT_EQ(last_priority, 0);
   EXPECT_EQ(1, priority_set.hostSetsPerPriority()[1]->priority());
   EXPECT_EQ(2, priority_set.hostSetsPerPriority()[2]->priority());
 
@@ -693,7 +695,7 @@ TEST(PrioritySet, Extend) {
 
   priority_set.hostSetsPerPriority()[1]->updateHosts(
       hosts, hosts, hosts_per_locality, hosts_per_locality, hosts_added, hosts_removed);
-  EXPECT_EQ(3, changes);
+  EXPECT_EQ(1, changes);
   EXPECT_EQ(last_priority, 1);
   EXPECT_EQ(1, priority_set.hostSetsPerPriority()[1]->hosts().size());
 
@@ -702,7 +704,6 @@ TEST(PrioritySet, Extend) {
   for (auto& host_set : priority_set.hostSetsPerPriority()) {
     EXPECT_EQ(host_set.get(), priority_set.hostSetsPerPriority()[i++].get());
   }
-  EXPECT_EQ(3, changes);
 }
 
 } // namespace
