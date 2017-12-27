@@ -57,11 +57,12 @@ Utility::QueryParams Utility::parseQueryString(const std::string& url) {
     if (end == std::string::npos) {
       end = url.size();
     }
+    absl::string_view param(url.c_str() + start, end - start);
 
-    size_t equal = url.find('=', start);
+    const size_t equal = param.find('=');
     if (equal != std::string::npos) {
-      params.emplace(StringUtil::subspan(url, start, equal),
-                     StringUtil::subspan(url, equal + 1, end));
+      params.emplace(StringUtil::subspan(url, start, start + equal),
+                     StringUtil::subspan(url, start + equal + 1, end));
     } else {
       params.emplace(StringUtil::subspan(url, start, end), "");
     }
@@ -244,11 +245,11 @@ void Utility::sendRedirect(StreamDecoderFilterCallbacks& callbacks, const std::s
   callbacks.encodeHeaders(std::move(response_headers), true);
 }
 
-Network::Address::InstanceConstSharedPtr
+Utility::GetLastAddressFromXffInfo
 Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
   const auto xff_header = request_headers.ForwardedFor();
   if (xff_header == nullptr) {
-    return nullptr;
+    return {nullptr, false};
   }
 
   absl::string_view xff_string(xff_header->value().c_str(), xff_header->value().size());
@@ -263,10 +264,11 @@ Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
     // practice, we are working with a view at the end of the owning string, and could pass the
     // raw pointer.
     // TODO(mattklein123 PERF: Avoid the copy here.
-    return Network::Utility::parseInternetAddress(
-        std::string(xff_string.data(), xff_string.size()));
+    return {
+        Network::Utility::parseInternetAddress(std::string(xff_string.data(), xff_string.size())),
+        last_comma == std::string::npos};
   } catch (const EnvoyException&) {
-    return nullptr;
+    return {nullptr, false};
   }
 }
 

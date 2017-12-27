@@ -242,7 +242,7 @@ void HttpIntegrationTest::testRouterHeaderOnlyRequestAndResponse(
     bool close_upstream, ConnectionCreationFunction* create_connection) {
   // This is called multiple times per test in ads_integration_test. Only call
   // initialize() the first time.
-  if (!initialized_) {
+  if (!initialized()) {
     initialize();
   }
   codec_client_ = makeHttpConnection(
@@ -1011,7 +1011,7 @@ void HttpIntegrationTest::testUpstreamProtocolError() {
   FakeRawConnectionPtr fake_upstream_connection = fake_upstreams_[0]->waitForRawConnection();
   // TODO(mattklein123): Waiting for exact amount of data is a hack. This needs to
   // be fixed.
-  fake_upstream_connection->waitForData(211);
+  fake_upstream_connection->waitForData(187);
   fake_upstream_connection->write("bad protocol data!");
   fake_upstream_connection->waitForDisconnect();
   codec_client_->waitForDisconnect();

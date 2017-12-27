@@ -33,9 +33,12 @@ REPOSITORY_LOCATIONS = dict(
         commit = "e57161e2a4bd1f9d3a8d3edf23185f033bb45f17",
         remote = "https://github.com/opentracing/opentracing-cpp", # v1.2.0
     ),
-    com_github_lightstep_lightstep_tracer_cpp = dict(
-        commit = "deb5284395075028c3e5b4eab1416fe1e597bdb7",
-        remote = "https://github.com/lightstep/lightstep-tracer-cpp", # v0.6.0
+    com_lightstep_tracer_cpp = dict(
+        # This picks up a commit after v0.6.0 (d4501f84de2d149da2a7a56c545a1c40f214db3f) that fixes
+        # a Clang build issue.
+        # TODO(htuch): Switch back to regular versioned releases at next release.
+        commit = "1c63a24bd7f4e71ccae0d807afd699c3d49307df",
+        remote = "https://github.com/lightstep/lightstep-tracer-cpp", # v0.6.0+
     ),
     lightstep_vendored_googleapis = dict(
         commit = "d6f78d948c53f3b400bb46996eb3084359914f9b",
@@ -67,7 +70,7 @@ REPOSITORY_LOCATIONS = dict(
         urls = ["https://github.com/google/protobuf/archive/v3.5.0.tar.gz"],
     ),
     envoy_api = dict(
-        commit = "3deffbd132b40fa544137902fdf83bec7442a87f",
+        commit = "05384e069b3ea910b04d1ee267aa4fc0fdf15103",
         remote = "https://github.com/envoyproxy/data-plane-api",
     ),
     grpc_httpjson_transcoding = dict(
