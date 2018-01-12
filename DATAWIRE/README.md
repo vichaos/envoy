@@ -114,8 +114,15 @@ to make sure the source formatting matches Envoy's draconian rules. You'll have 
 Back on the host, after you have a good build:
 
 ```
-docker build -f ci/Dockerfile-envoy-unstripped -t datawire/ambassador-envoy:$(git describe --tags) ci
-docker push datawire/ambassador-envoy:$(git describe --tags)
+docker build -f ci/Dockerfile-envoy-unstripped -t datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*') ci
+docker push datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*')
+```
+
+If you like, you can build over Alpine, too:
+
+```
+docker build -f ci/Dockerfile-envoy-alpine-unstripped -t datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*') ci
+docker push datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*')
 ```
 
 (Obviously, if you're not Datawire, you should change the Docker registry in use. `datawire` won't work for you.)
