@@ -1,7 +1,7 @@
 #ECHO=echo
 
 VERSION=$(git describe --tags --exclude 'ambassador-*')
-REGISTRY=${1:-quay.io/datawire}
+REGISTRY=${1:-datawire}
 
 for combo in ubuntu-unstripped alpine-unstripped alpine-stripped; do
     dockerfile="Dockerfile-$combo"
