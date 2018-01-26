@@ -111,19 +111,24 @@ to make sure the source formatting matches Envoy's draconian rules. You'll have 
 
 ## Dockerizing
 
-Back on the host, after you have a good build:
+Back on the host, after you have a good build, in the `DATAWIRE` directory:
 
 ```
-docker build -f ci/Dockerfile-envoy-unstripped -t datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*') ci
-docker push datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*')
+sh build-docker-images.sh
 ```
 
-If you like, you can build over Alpine, too:
+This will build and push images for Ubuntu unstripped, Alpine unstripped, and Alpine stripped, e.g.:
 
 ```
-docker build -f ci/Dockerfile-envoy-alpine-unstripped -t datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*') ci
-docker push datawire/ambassador-envoy:$(git describe --tags --exclude 'ambassador-*')
+datawire/ambassador-envoy-ubuntu-unstripped:v1.5.0-230-g79cefbed8
+datawire/ambassador-envoy-alpine-unstripped:v1.5.0-230-g79cefbed8
+datawire/ambassador-envoy-alpine-stripped:v1.5.0-230-g79cefbed8
 ```
 
-(Obviously, if you're not Datawire, you should change the Docker registry in use. `datawire` won't work for you.)
+The pushes will fail if you're not from Datawire -- you can use
 
+```
+sh build-docker-images.sh $registry
+```
+
+to supply a different Docker registry for this. Use a registry of '-' to skip the push entirely.
