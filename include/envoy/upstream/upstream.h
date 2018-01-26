@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 
+#include "envoy/api/v2/base.pb.h"
 #include "envoy/common/callback.h"
 #include "envoy/common/optional.h"
 #include "envoy/http/codec.h"
 #include "envoy/network/connection.h"
+#include "envoy/network/transport_socket.h"
 #include "envoy/ssl/context.h"
 #include "envoy/upstream/health_check_host_monitor.h"
 #include "envoy/upstream/load_balancer_type.h"
@@ -292,8 +294,8 @@ public:
 
 /**
  * All cluster load report stats. These are only use for EDS load reporting and not sent to the
- * stats sink. See envoy.api.v2.ClusterStats for the definition of upstream_rq_dropped. These are
- * latched by LoadStatsReporter, independent of the normal stats sink flushing.
+ * stats sink. See envoy.api.v2.endpoint.ClusterStats for the definition of upstream_rq_dropped.
+ * These are latched by LoadStatsReporter, independent of the normal stats sink flushing.
  */
 // clang-format off
 #define ALL_CLUSTER_LOAD_REPORT_STATS(COUNTER)                                                     \
@@ -322,6 +324,9 @@ public:
   struct Features {
     // Whether the upstream supports HTTP2. This is used when creating connection pools.
     static const uint64_t HTTP2 = 0x1;
+    // Use the downstream protocol (HTTP1.1, HTTP2) for upstream connections as well, if available.
+    // This is used when creating connection pools.
+    static const uint64_t USE_DOWNSTREAM_PROTOCOL = 0x2;
   };
 
   virtual ~ClusterInfo() {}
@@ -359,9 +364,15 @@ public:
   virtual LoadBalancerType lbType() const PURE;
 
   /**
+   * @return the service discovery type to use for resolving the cluster.
+   */
+  virtual envoy::api::v2::cluster::Cluster::DiscoveryType type() const PURE;
+
+  /**
    * @return configuration for ring hash load balancing, only used if type is set to ring_hash_lb.
    */
-  virtual const Optional<envoy::api::v2::Cluster::RingHashLbConfig>& lbRingHashConfig() const PURE;
+  virtual const Optional<envoy::api::v2::cluster::Cluster::RingHashLbConfig>&
+  lbRingHashConfig() const PURE;
 
   /**
    * @return Whether the cluster is currently in maintenance mode and should not be routed to.
@@ -390,9 +401,10 @@ public:
   virtual ResourceManager& resourceManager(ResourcePriority priority) const PURE;
 
   /**
-   * @return the SSL context to use when communicating with the cluster.
+   * @return Network::TransportSocketFactory& the factory of transport socket to use when
+   *         communicating with the cluster.
    */
-  virtual Ssl::ClientContext* sslContext() const PURE;
+  virtual Network::TransportSocketFactory& transportSocketFactory() const PURE;
 
   /**
    * @return ClusterStats& strongly named stats for this cluster.
@@ -421,6 +433,11 @@ public:
    * @return the configuration for load balancer subsets.
    */
   virtual const LoadBalancerSubsetInfo& lbSubsetInfo() const PURE;
+
+  /**
+   * @return const envoy::api::v2::Metadata& the configuration metadata for this cluster.
+   */
+  virtual const envoy::api::v2::Metadata& metadata() const PURE;
 };
 
 typedef std::shared_ptr<const ClusterInfo> ClusterInfoConstSharedPtr;

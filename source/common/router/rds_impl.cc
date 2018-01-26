@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "envoy/api/v2/route/route.pb.validate.h"
+
 #include "common/common/assert.h"
 #include "common/config/rds_json.h"
 #include "common/config/subscription_factory.h"
@@ -13,7 +15,6 @@
 #include "common/router/config_impl.h"
 #include "common/router/rds_subscription.h"
 
-#include "api/rds.pb.validate.h"
 #include "fmt/format.h"
 
 namespace Envoy {
@@ -36,7 +37,7 @@ RouteConfigProviderSharedPtr RouteConfigProviderUtil::create(
 }
 
 StaticRouteConfigProviderImpl::StaticRouteConfigProviderImpl(
-    const envoy::api::v2::RouteConfiguration& config, Runtime::Loader& runtime,
+    const envoy::api::v2::route::RouteConfiguration& config, Runtime::Loader& runtime,
     Upstream::ClusterManager& cm)
     : config_(new ConfigImpl(config, runtime, cm, true)) {}
 
@@ -55,26 +56,30 @@ RdsRouteConfigProviderImpl::RdsRouteConfigProviderImpl(
       route_config_provider_manager_(route_config_provider_manager),
       manager_identifier_(manager_identifier) {
   ::Envoy::Config::Utility::checkLocalInfo("rds", local_info);
+
+  // TODO: dummy to force linking the gRPC service proto
+  envoy::service::discovery::v2::RdsDummy dummy;
+
   ConfigConstSharedPtr initial_config(new NullConfigImpl());
   tls_->set([initial_config](Event::Dispatcher&) -> ThreadLocal::ThreadLocalObjectSharedPtr {
     return std::make_shared<ThreadLocalConfig>(initial_config);
   });
   subscription_ = Envoy::Config::SubscriptionFactory::subscriptionFromConfigSource<
-      envoy::api::v2::RouteConfiguration>(
+      envoy::api::v2::route::RouteConfiguration>(
       rds.config_source(), local_info.node(), dispatcher, cm, random, *scope_,
       [this, &rds, &dispatcher, &random,
-       &local_info]() -> Envoy::Config::Subscription<envoy::api::v2::RouteConfiguration>* {
+       &local_info]() -> Envoy::Config::Subscription<envoy::api::v2::route::RouteConfiguration>* {
         return new RdsSubscription(Envoy::Config::Utility::generateStats(*scope_), rds, cm_,
                                    dispatcher, random, local_info);
       },
-      "envoy.api.v2.RouteDiscoveryService.FetchRoutes",
-      "envoy.api.v2.RouteDiscoveryService.StreamRoutes");
+      "envoy.service.discovery.v2.RouteDiscoveryService.FetchRoutes",
+      "envoy.service.discovery.v2.RouteDiscoveryService.StreamRoutes");
 
   // In V2 we use a Subscription model where the fetch can happen via gRPC, REST, or
   // local filesystem. If the subscription happens via local filesystem (e.g xds_integration_test),
   // then there is no actual RDS server, and hence no RDS cluster name.
   if (rds.has_config_source() && rds.config_source().has_api_config_source()) {
-    cluster_name_ = rds.config_source().api_config_source().cluster_name()[0];
+    cluster_name_ = rds.config_source().api_config_source().cluster_names()[0];
   } else {
     cluster_name_ = "NOT_USING_CLUSTER";
   }
@@ -150,7 +155,7 @@ RouteConfigProviderManagerImpl::RouteConfigProviderManagerImpl(
     : runtime_(runtime), dispatcher_(dispatcher), random_(random), local_info_(local_info),
       tls_(tls), admin_(admin) {
   admin_.addHandler("/routes", "print out currently loaded dynamic HTTP route tables",
-                    MAKE_ADMIN_HANDLER(RouteConfigProviderManagerImpl::handlerRoutes), true);
+                    MAKE_ADMIN_HANDLER(RouteConfigProviderManagerImpl::handlerRoutes), true, false);
 }
 
 RouteConfigProviderManagerImpl::~RouteConfigProviderManagerImpl() {
@@ -205,7 +210,7 @@ Router::RouteConfigProviderSharedPtr RouteConfigProviderManagerImpl::getRouteCon
   return new_provider;
 };
 
-Http::Code RouteConfigProviderManagerImpl::handlerRoutes(const std::string& url,
+Http::Code RouteConfigProviderManagerImpl::handlerRoutes(const std::string& url, Http::HeaderMap&,
                                                          Buffer::Instance& response) {
   Http::Utility::QueryParams query_params = Http::Utility::parseQueryString(url);
   // If there are no query params, print out all the configured route tables.

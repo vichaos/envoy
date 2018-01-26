@@ -107,14 +107,40 @@ envoy_cc_library(
     name = "tcp_proxy_lib",
     srcs = ["tcp_proxy.cc"],
     hdrs = ["tcp_proxy.h"],
-    external_deps = [
-        "envoy_filter_network_tcp_proxy",
-    ],
     deps = [
         "//include/envoy/registry",
         "//include/envoy/server:filter_config_interface",
         "//source/common/config:filter_json_lib",
         "//source/common/config:well_known_names",
         "//source/common/filter:tcp_proxy_lib",
+        "@envoy_api//envoy/api/v2/filter/network:tcp_proxy_cc",
+    ],
+)
+
+envoy_cc_library(
+    name = "raw_buffer_socket_lib",
+    srcs = ["raw_buffer_socket.cc"],
+    hdrs = ["raw_buffer_socket.h"],
+    deps = [
+        "//include/envoy/network:transport_socket_interface",
+        "//include/envoy/registry",
+        "//include/envoy/server:transport_socket_config_interface",
+        "//source/common/config:well_known_names",
+        "//source/common/network:raw_buffer_socket_lib",
+    ],
+)
+
+envoy_cc_library(
+    name = "ssl_socket_lib",
+    srcs = ["ssl_socket.cc"],
+    hdrs = ["ssl_socket.h"],
+    deps = [
+        "//include/envoy/network:transport_socket_interface",
+        "//include/envoy/registry",
+        "//include/envoy/server:transport_socket_config_interface",
+        "//source/common/config:well_known_names",
+        "//source/common/network:raw_buffer_socket_lib",
+        "//source/common/ssl:connection_lib",
+        "@envoy_api//envoy/api/v2/auth:cert_cc",
     ],
 )

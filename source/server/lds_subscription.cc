@@ -1,12 +1,13 @@
 #include "server/lds_subscription.h"
 
+#include "envoy/api/v2/listener/listener.pb.h"
+
 #include "common/config/lds_json.h"
 #include "common/config/utility.h"
 #include "common/http/headers.h"
 #include "common/json/config_schemas.h"
 #include "common/json/json_loader.h"
 
-#include "api/lds.pb.h"
 #include "fmt/format.h"
 
 namespace Envoy {
@@ -17,7 +18,7 @@ LdsSubscription::LdsSubscription(Config::SubscriptionStats stats,
                                  Upstream::ClusterManager& cm, Event::Dispatcher& dispatcher,
                                  Runtime::RandomGenerator& random,
                                  const LocalInfo::LocalInfo& local_info)
-    : RestApiFetcher(cm, lds_config.api_config_source().cluster_name()[0], dispatcher, random,
+    : RestApiFetcher(cm, lds_config.api_config_source().cluster_names()[0], dispatcher, random,
                      Config::Utility::apiConfigSourceRefreshDelay(lds_config.api_config_source())),
       local_info_(local_info), stats_(stats) {
   const auto& api_config_source = lds_config.api_config_source();
@@ -25,9 +26,9 @@ LdsSubscription::LdsSubscription(Config::SubscriptionStats stats,
   // If we are building an LdsSubscription, the ConfigSource should be REST_LEGACY.
   ASSERT(api_config_source.api_type() == envoy::api::v2::ApiConfigSource::REST_LEGACY);
   // TODO(htuch): Add support for multiple clusters, #1170.
-  ASSERT(api_config_source.cluster_name().size() == 1);
+  ASSERT(api_config_source.cluster_names().size() == 1);
   ASSERT(api_config_source.has_refresh_delay());
-  Envoy::Config::Utility::checkClusterAndLocalInfo("lds", api_config_source.cluster_name()[0], cm,
+  Envoy::Config::Utility::checkClusterAndLocalInfo("lds", api_config_source.cluster_names()[0], cm,
                                                    local_info);
 }
 
@@ -46,7 +47,7 @@ void LdsSubscription::parseResponse(const Http::Message& response) {
   response_json->validateSchema(Json::Schema::LDS_SCHEMA);
   std::vector<Json::ObjectSharedPtr> json_listeners = response_json->getObjectArray("listeners");
 
-  Protobuf::RepeatedPtrField<envoy::api::v2::Listener> resources;
+  Protobuf::RepeatedPtrField<envoy::api::v2::listener::Listener> resources;
   for (const Json::ObjectSharedPtr& json_listener : json_listeners) {
     Config::LdsJson::translateListener(*json_listener, *resources.Add());
   }

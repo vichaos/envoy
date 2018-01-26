@@ -1,5 +1,6 @@
 #include "test/mocks/upstream/cluster_info.h"
 
+#include "common/network/raw_buffer_socket.h"
 #include "common/upstream/upstream_impl.h"
 
 using testing::Invoke;
@@ -14,7 +15,7 @@ namespace Upstream {
 MockLoadBalancerSubsetInfo::MockLoadBalancerSubsetInfo() {
   ON_CALL(*this, isEnabled()).WillByDefault(Return(false));
   ON_CALL(*this, fallbackPolicy())
-      .WillByDefault(Return(envoy::api::v2::Cluster::LbSubsetConfig::ANY_ENDPOINT));
+      .WillByDefault(Return(envoy::api::v2::cluster::Cluster::LbSubsetConfig::ANY_ENDPOINT));
   ON_CALL(*this, defaultSubset()).WillByDefault(ReturnRef(ProtobufWkt::Struct::default_instance()));
   ON_CALL(*this, subsetKeys()).WillByDefault(ReturnRef(subset_keys_));
 }
@@ -23,6 +24,7 @@ MockLoadBalancerSubsetInfo::~MockLoadBalancerSubsetInfo() {}
 
 MockClusterInfo::MockClusterInfo()
     : stats_(ClusterInfoImpl::generateStats(stats_store_)),
+      transport_socket_factory_(new Network::RawBufferSocketFactory),
       load_report_stats_(ClusterInfoImpl::generateLoadReportStats(load_report_stats_store_)),
       resource_manager_(new Upstream::ResourceManagerImpl(runtime_, "fake_key", 1, 1024, 1024, 1)) {
 
@@ -33,6 +35,7 @@ MockClusterInfo::MockClusterInfo()
       .WillByDefault(ReturnPointee(&max_requests_per_connection_));
   ON_CALL(*this, stats()).WillByDefault(ReturnRef(stats_));
   ON_CALL(*this, statsScope()).WillByDefault(ReturnRef(stats_store_));
+  ON_CALL(*this, transportSocketFactory()).WillByDefault(ReturnRef(*transport_socket_factory_));
   ON_CALL(*this, loadReportStats()).WillByDefault(ReturnRef(load_report_stats_));
   ON_CALL(*this, sourceAddress()).WillByDefault(ReturnRef(source_address_));
   ON_CALL(*this, resourceManager(_))

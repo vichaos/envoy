@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "envoy/api/v2/filter/network/http_connection_manager.pb.validate.h"
 #include "envoy/filesystem/filesystem.h"
 #include "envoy/network/connection.h"
 #include "envoy/registry/registry.h"
@@ -23,7 +24,6 @@
 #include "common/protobuf/utility.h"
 #include "common/router/rds_impl.h"
 
-#include "api/filter/network/http_connection_manager.pb.validate.h"
 #include "fmt/format.h"
 
 namespace Envoy {
@@ -228,6 +228,7 @@ HttpConnectionManagerConfig::HttpConnectionManagerConfig(
 
     const Json::ObjectSharedPtr filter_config =
         MessageUtil::getJsonObjectFromMessage(proto_config.config());
+    ENVOY_LOG(debug, "    config: {}", filter_config->asJsonString());
 
     // Now see if there is a factory that will accept the config.
     auto& factory = Config::Utility::getAndCheckFactory<NamedHttpFilterConfigFactory>(string_name);

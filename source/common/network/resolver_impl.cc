@@ -1,5 +1,6 @@
 #include "common/network/resolver_impl.h"
 
+#include "envoy/api/v2/address.pb.h"
 #include "envoy/common/exception.h"
 #include "envoy/network/address.h"
 #include "envoy/network/resolver.h"
@@ -8,8 +9,6 @@
 #include "common/config/well_known_names.h"
 #include "common/network/address_impl.h"
 #include "common/network/utility.h"
-
-#include "api/address.pb.h"
 
 namespace Envoy {
 namespace Network {
@@ -26,8 +25,8 @@ public:
     case envoy::api::v2::SocketAddress::kPortValue:
     // Default to port 0 if no port value is specified.
     case envoy::api::v2::SocketAddress::PORT_SPECIFIER_NOT_SET:
-      return Network::Utility::parseInternetAddress(socket_address.address(),
-                                                    socket_address.port_value());
+      return Network::Utility::parseInternetAddress(
+          socket_address.address(), socket_address.port_value(), !socket_address.ipv4_compat());
 
     default:
       throw EnvoyException(fmt::format("IP resolver can't handle port specifier type {}",

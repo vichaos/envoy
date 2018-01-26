@@ -1,5 +1,7 @@
 #include "test/integration/tcp_proxy_integration_test.h"
 
+#include "envoy/api/v2/filter/accesslog/accesslog.pb.h"
+
 #include "common/filesystem/filesystem_impl.h"
 #include "common/network/utility.h"
 #include "common/ssl/context_manager_impl.h"
@@ -8,7 +10,6 @@
 #include "test/integration/utility.h"
 #include "test/mocks/runtime/mocks.h"
 
-#include "api/filter/accesslog/accesslog.pb.h"
 #include "gtest/gtest.h"
 
 using testing::Invoke;
@@ -111,7 +112,7 @@ void TcpProxyIntegrationTest::sendAndReceiveTlsData(const std::string& data_to_s
   FakeRawConnectionPtr fake_upstream_connection;
   testing::NiceMock<Runtime::MockLoader> runtime;
   std::unique_ptr<Ssl::ContextManager> context_manager(new Ssl::ContextManagerImpl(runtime));
-  Ssl::ClientContextPtr context;
+  Network::TransportSocketFactoryPtr context;
   ConnectionStatusCallbacks connect_callbacks;
   MockWatermarkBuffer* client_write_buffer;
   // Set up the mock buffer factory so the newly created SSL client will have a mock write
@@ -131,9 +132,9 @@ void TcpProxyIntegrationTest::sendAndReceiveTlsData(const std::string& data_to_s
   // Set up the SSl client.
   Network::Address::InstanceConstSharedPtr address =
       Ssl::getSslAddress(version_, lookupPort("tcp_proxy"));
-  context = Ssl::createClientSslContext(false, false, *context_manager);
-  ssl_client = dispatcher_->createSslClientConnection(*context, address,
-                                                      Network::Address::InstanceConstSharedPtr());
+  context = Ssl::createClientSslTransportSocketFactory(false, false, *context_manager);
+  ssl_client = dispatcher_->createClientConnection(
+      address, Network::Address::InstanceConstSharedPtr(), context->createTransportSocket());
 
   // Perform the SSL handshake. Loopback is whitelisted in tcp_proxy.json for the ssl_auth
   // filter so there will be no pause waiting on auth data.
@@ -176,7 +177,7 @@ TEST_P(TcpProxyIntegrationTest, LargeBidirectionalTlsWrites) {
 TEST_P(TcpProxyIntegrationTest, AccessLog) {
   std::string access_log_path = TestEnvironment::temporaryPath(
       fmt::format("access_log{}.txt", GetParam() == Network::Address::IpVersion::v4 ? "v4" : "v6"));
-  config_helper_.addConfigModifier([&](envoy::api::v2::Bootstrap& bootstrap) -> void {
+  config_helper_.addConfigModifier([&](envoy::config::bootstrap::v2::Bootstrap& bootstrap) -> void {
     auto* listener = bootstrap.mutable_static_resources()->mutable_listeners(0);
     auto* filter_chain = listener->mutable_filter_chains(0);
     auto* config_blob = filter_chain->mutable_filters(0)->mutable_config();

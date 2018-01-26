@@ -19,7 +19,7 @@ CdsSubscription::CdsSubscription(Config::SubscriptionStats stats,
                                  ClusterManager& cm, Event::Dispatcher& dispatcher,
                                  Runtime::RandomGenerator& random,
                                  const LocalInfo::LocalInfo& local_info)
-    : RestApiFetcher(cm, cds_config.api_config_source().cluster_name()[0], dispatcher, random,
+    : RestApiFetcher(cm, cds_config.api_config_source().cluster_names()[0], dispatcher, random,
                      Config::Utility::apiConfigSourceRefreshDelay(cds_config.api_config_source())),
       local_info_(local_info), stats_(stats), eds_config_(eds_config) {
   const auto& api_config_source = cds_config.api_config_source();
@@ -27,7 +27,7 @@ CdsSubscription::CdsSubscription(Config::SubscriptionStats stats,
   // If we are building an CdsSubscription, the ConfigSource should be REST_LEGACY.
   ASSERT(api_config_source.api_type() == envoy::api::v2::ApiConfigSource::REST_LEGACY);
   // TODO(htuch): Add support for multiple clusters, #1170.
-  ASSERT(api_config_source.cluster_name().size() == 1);
+  ASSERT(api_config_source.cluster_names().size() == 1);
   ASSERT(api_config_source.has_refresh_delay());
 }
 
@@ -46,7 +46,7 @@ void CdsSubscription::parseResponse(const Http::Message& response) {
   response_json->validateSchema(Json::Schema::CDS_SCHEMA);
   std::vector<Json::ObjectSharedPtr> clusters = response_json->getObjectArray("clusters");
 
-  Protobuf::RepeatedPtrField<envoy::api::v2::Cluster> resources;
+  Protobuf::RepeatedPtrField<envoy::api::v2::cluster::Cluster> resources;
   for (const Json::ObjectSharedPtr& cluster : clusters) {
     Config::CdsJson::translateCluster(*cluster, eds_config_, *resources.Add());
   }

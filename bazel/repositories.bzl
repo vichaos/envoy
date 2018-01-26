@@ -130,64 +130,6 @@ def _go_deps(skip_targets):
 def _envoy_api_deps():
     _repository_impl("envoy_api")
 
-    api_bind_targets = [
-        "address",
-        "base",
-        "bootstrap",
-        "discovery",
-        "cds",
-        "discovery",
-        "eds",
-        "health_check",
-        "lds",
-        "protocol",
-        "rds",
-        "sds",
-        "stats",
-        "trace",
-    ]
-    for t in api_bind_targets:
-        native.bind(
-            name = "envoy_" + t,
-            actual = "@envoy_api//api:" + t + "_cc",
-        )
-    filter_bind_targets = [
-        "accesslog",
-        "fault",
-    ]
-    for t in filter_bind_targets:
-        native.bind(
-            name = "envoy_filter_" + t,
-            actual = "@envoy_api//api/filter:" + t + "_cc",
-        )
-    http_filter_bind_targets = [
-        "buffer",
-        "fault",
-        "health_check",
-        "ip_tagging",
-        "lua",
-        "rate_limit",
-        "router",
-        "transcoder",
-    ]
-    for t in http_filter_bind_targets:
-        native.bind(
-            name = "envoy_filter_http_" + t,
-            actual = "@envoy_api//api/filter/http:" + t + "_cc",
-        )
-    network_filter_bind_targets = [
-        "http_connection_manager",
-        "tcp_proxy",
-        "mongo_proxy",
-        "redis_proxy",
-        "rate_limit",
-        "client_ssl_auth",
-    ]
-    for t in network_filter_bind_targets:
-        native.bind(
-            name = "envoy_filter_network_" + t,
-            actual = "@envoy_api//api/filter/network:" + t + "_cc",
-        )
     native.bind(
         name = "http_api_protos",
         actual = "@googleapis//:http_api_protos",
@@ -239,6 +181,7 @@ def envoy_dependencies(path = "@envoy_deps//", skip_targets = []):
     _com_github_gcovr_gcovr()
     _io_opentracing_cpp()
     _com_lightstep_tracer_cpp()
+    _com_github_grpc_grpc()
     _com_github_nodejs_http_parser()
     _com_github_tencent_rapidjson()
     _com_google_googletest()
@@ -367,6 +310,10 @@ def _com_google_absl():
         name = "abseil_strings",
         actual = "@com_google_absl//absl/strings:strings",
     )
+    native.bind(
+        name = "abseil_int128",
+        actual = "@com_google_absl//absl/numeric:int128",
+    )
 
 def _com_google_protobuf():
     _repository_impl("com_google_protobuf")
@@ -383,4 +330,31 @@ def _com_google_protobuf():
     native.bind(
         name = "protoc",
         actual = "@com_google_protobuf_cc//:protoc",
+    )
+
+def _com_github_grpc_grpc():
+    _repository_impl("com_github_grpc_grpc")
+
+    # Rebind some stuff to match what the gRPC Bazel is expecting.
+    native.bind(
+      name = "protobuf_headers",
+      actual = "@com_google_protobuf//:protobuf_headers",
+    )
+    native.bind(
+      name = "libssl",
+      actual = "//external:ssl",
+    )
+    native.bind(
+      name = "cares",
+      actual = "//external:ares",
+    )
+
+    native.bind(
+      name = "grpc",
+      actual = "@com_github_grpc_grpc//:grpc++"
+    )
+
+    native.bind(
+      name = "grpc_health_proto",
+      actual = "@envoy//bazel:grpc_health_proto",
     )

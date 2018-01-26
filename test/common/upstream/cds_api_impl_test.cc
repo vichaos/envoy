@@ -45,6 +45,14 @@ public:
     if (v2_rest) {
       cds_config.mutable_api_config_source()->set_api_type(envoy::api::v2::ApiConfigSource::REST);
     }
+    Upstream::ClusterManager::ClusterInfoMap cluster_map;
+    Upstream::MockCluster cluster;
+    cluster_map.emplace("foo_cluster", cluster);
+    EXPECT_CALL(cm_, clusters()).WillOnce(Return(cluster_map));
+    EXPECT_CALL(cluster, info());
+    EXPECT_CALL(*cluster.info_, addedViaApi());
+    EXPECT_CALL(cluster, info());
+    EXPECT_CALL(*cluster.info_, type());
     cds_ =
         CdsApiImpl::create(cds_config, eds_config_, cm_, dispatcher_, random_, local_info_, store_);
     cds_->setInitializedCb([this]() -> void { initialized_.ready(); });
@@ -55,7 +63,7 @@ public:
 
   void expectAdd(const std::string& cluster_name) {
     EXPECT_CALL(cm_, addOrUpdatePrimaryCluster(_))
-        .WillOnce(Invoke([cluster_name](const envoy::api::v2::Cluster& cluster) -> bool {
+        .WillOnce(Invoke([cluster_name](const envoy::api::v2::cluster::Cluster& cluster) -> bool {
           EXPECT_EQ(cluster_name, cluster.name());
           return true;
         }));
@@ -106,7 +114,7 @@ TEST_F(CdsApiImplTest, ValidateFail) {
 
   setup(true);
 
-  Protobuf::RepeatedPtrField<envoy::api::v2::Cluster> clusters;
+  Protobuf::RepeatedPtrField<envoy::api::v2::cluster::Cluster> clusters;
   clusters.Add();
 
   EXPECT_THROW(dynamic_cast<CdsApiImpl*>(cds_.get())->onConfigUpdate(clusters),

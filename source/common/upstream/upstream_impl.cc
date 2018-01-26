@@ -11,6 +11,7 @@
 #include "envoy/event/dispatcher.h"
 #include "envoy/event/timer.h"
 #include "envoy/network/dns.h"
+#include "envoy/server/transport_socket_config.h"
 #include "envoy/ssl/context.h"
 #include "envoy/upstream/health_checker.h"
 
@@ -18,8 +19,10 @@
 #include "common/common/utility.h"
 #include "common/config/protocol_json.h"
 #include "common/config/tls_context_json.h"
+#include "common/config/utility.h"
 #include "common/http/utility.h"
 #include "common/network/address_impl.h"
+#include "common/network/raw_buffer_socket.h"
 #include "common/network/resolver_impl.h"
 #include "common/network/utility.h"
 #include "common/protobuf/protobuf.h"
@@ -38,7 +41,7 @@ namespace Upstream {
 namespace {
 
 const Network::Address::InstanceConstSharedPtr
-getSourceAddress(const envoy::api::v2::Cluster& cluster,
+getSourceAddress(const envoy::api::v2::cluster::Cluster& cluster,
                  const Network::Address::InstanceConstSharedPtr source_address) {
   // The source address from cluster config takes precedence.
   if (cluster.upstream_bind_config().has_source_address()) {
@@ -57,10 +60,8 @@ Host::CreateConnectionData HostImpl::createConnection(Event::Dispatcher& dispatc
 Network::ClientConnectionPtr
 HostImpl::createConnection(Event::Dispatcher& dispatcher, const ClusterInfo& cluster,
                            Network::Address::InstanceConstSharedPtr address) {
-  Network::ClientConnectionPtr connection =
-      cluster.sslContext() ? dispatcher.createSslClientConnection(*cluster.sslContext(), address,
-                                                                  cluster.sourceAddress())
-                           : dispatcher.createClientConnection(address, cluster.sourceAddress());
+  Network::ClientConnectionPtr connection = dispatcher.createClientConnection(
+      address, cluster.sourceAddress(), cluster.transportSocketFactory().createTransportSocket());
   connection->setBufferLimits(cluster.perConnectionBufferLimitBytes());
   return connection;
 }
@@ -90,11 +91,11 @@ ClusterLoadReportStats ClusterInfoImpl::generateLoadReportStats(Stats::Scope& sc
   return {ALL_CLUSTER_LOAD_REPORT_STATS(POOL_COUNTER(scope))};
 }
 
-ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::Cluster& config,
+ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::cluster::Cluster& config,
                                  const Network::Address::InstanceConstSharedPtr source_address,
                                  Runtime::Loader& runtime, Stats::Store& stats,
                                  Ssl::ContextManager& ssl_context_manager, bool added_via_api)
-    : runtime_(runtime), name_(config.name()),
+    : runtime_(runtime), name_(config.name()), type_(config.type()),
       max_requests_per_connection_(
           PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, max_requests_per_connection, 0)),
       connect_timeout_(
@@ -109,30 +110,43 @@ ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::Cluster& config,
       resource_managers_(config, runtime, name_),
       maintenance_mode_runtime_key_(fmt::format("upstream.maintenance_mode.{}", name_)),
       source_address_(getSourceAddress(config, source_address)),
-      lb_ring_hash_config_(envoy::api::v2::Cluster::RingHashLbConfig(config.ring_hash_lb_config())),
-      added_via_api_(added_via_api),
-      lb_subset_(LoadBalancerSubsetInfoImpl(config.lb_subset_config())) {
-  ssl_ctx_ = nullptr;
-  if (config.has_tls_context()) {
-    Ssl::ClientContextConfigImpl context_config(config.tls_context());
-    ssl_ctx_ = ssl_context_manager.createSslClientContext(*stats_scope_, context_config);
+      lb_ring_hash_config_(
+          envoy::api::v2::cluster::Cluster::RingHashLbConfig(config.ring_hash_lb_config())),
+      ssl_context_manager_(ssl_context_manager), added_via_api_(added_via_api),
+      lb_subset_(LoadBalancerSubsetInfoImpl(config.lb_subset_config())),
+      metadata_(config.metadata()) {
+
+  auto transport_socket = config.transport_socket();
+  if (!config.has_transport_socket()) {
+    if (config.has_tls_context()) {
+      transport_socket.set_name(Config::TransportSocketNames::get().SSL);
+      MessageUtil::jsonConvert(config.tls_context(), *transport_socket.mutable_config());
+    } else {
+      transport_socket.set_name(Config::TransportSocketNames::get().RAW_BUFFER);
+    }
   }
 
+  auto& config_factory = Config::Utility::getAndCheckFactory<
+      Server::Configuration::UpstreamTransportSocketConfigFactory>(transport_socket.name());
+  ProtobufTypes::MessagePtr message =
+      Config::Utility::translateToFactoryConfig(transport_socket, config_factory);
+  transport_socket_factory_ = config_factory.createTransportSocketFactory(*message, *this);
+
   switch (config.lb_policy()) {
-  case envoy::api::v2::Cluster::ROUND_ROBIN:
+  case envoy::api::v2::cluster::Cluster::ROUND_ROBIN:
     lb_type_ = LoadBalancerType::RoundRobin;
     break;
-  case envoy::api::v2::Cluster::LEAST_REQUEST:
+  case envoy::api::v2::cluster::Cluster::LEAST_REQUEST:
     lb_type_ = LoadBalancerType::LeastRequest;
     break;
-  case envoy::api::v2::Cluster::RANDOM:
+  case envoy::api::v2::cluster::Cluster::RANDOM:
     lb_type_ = LoadBalancerType::Random;
     break;
-  case envoy::api::v2::Cluster::RING_HASH:
+  case envoy::api::v2::cluster::Cluster::RING_HASH:
     lb_type_ = LoadBalancerType::RingHash;
     break;
-  case envoy::api::v2::Cluster::ORIGINAL_DST_LB:
-    if (config.type() != envoy::api::v2::Cluster::ORIGINAL_DST) {
+  case envoy::api::v2::cluster::Cluster::ORIGINAL_DST_LB:
+    if (config.type() != envoy::api::v2::cluster::Cluster::ORIGINAL_DST) {
       throw EnvoyException(fmt::format(
           "cluster: LB type 'original_dst_lb' may only be used with cluser type 'original_dst'"));
     }
@@ -141,20 +155,27 @@ ClusterInfoImpl::ClusterInfoImpl(const envoy::api::v2::Cluster& config,
   default:
     NOT_REACHED;
   }
+
+  if (config.protocol_selection() == envoy::api::v2::cluster::Cluster::USE_CONFIGURED_PROTOCOL) {
+    // Make sure multiple protocol configurations are not present
+    if (config.has_http_protocol_options() && config.has_http2_protocol_options()) {
+      throw EnvoyException(fmt::format("cluster: Both HTTP1 and HTTP2 options may only be "
+                                       "configured with non-default 'protocol_selection' values"));
+    }
+  }
 }
 
 const HostListsConstSharedPtr ClusterImplBase::empty_host_lists_{
     new std::vector<std::vector<HostSharedPtr>>()};
 
-ClusterSharedPtr ClusterImplBase::create(const envoy::api::v2::Cluster& cluster, ClusterManager& cm,
-                                         Stats::Store& stats, ThreadLocal::Instance& tls,
-                                         Network::DnsResolverSharedPtr dns_resolver,
-                                         Ssl::ContextManager& ssl_context_manager,
-                                         Runtime::Loader& runtime, Runtime::RandomGenerator& random,
-                                         Event::Dispatcher& dispatcher,
-                                         const LocalInfo::LocalInfo& local_info,
-                                         Outlier::EventLoggerSharedPtr outlier_event_logger,
-                                         bool added_via_api) {
+ClusterSharedPtr
+ClusterImplBase::create(const envoy::api::v2::cluster::Cluster& cluster, ClusterManager& cm,
+                        Stats::Store& stats, ThreadLocal::Instance& tls,
+                        Network::DnsResolverSharedPtr dns_resolver,
+                        Ssl::ContextManager& ssl_context_manager, Runtime::Loader& runtime,
+                        Runtime::RandomGenerator& random, Event::Dispatcher& dispatcher,
+                        const LocalInfo::LocalInfo& local_info,
+                        Outlier::EventLoggerSharedPtr outlier_event_logger, bool added_via_api) {
   std::unique_ptr<ClusterImplBase> new_cluster;
 
   // We make this a shared pointer to deal with the distinct ownership
@@ -175,22 +196,22 @@ ClusterSharedPtr ClusterImplBase::create(const envoy::api::v2::Cluster& cluster,
   }
 
   switch (cluster.type()) {
-  case envoy::api::v2::Cluster::STATIC:
+  case envoy::api::v2::cluster::Cluster::STATIC:
     new_cluster.reset(
         new StaticClusterImpl(cluster, runtime, stats, ssl_context_manager, cm, added_via_api));
     break;
-  case envoy::api::v2::Cluster::STRICT_DNS:
+  case envoy::api::v2::cluster::Cluster::STRICT_DNS:
     new_cluster.reset(new StrictDnsClusterImpl(cluster, runtime, stats, ssl_context_manager,
                                                selected_dns_resolver, cm, dispatcher,
                                                added_via_api));
     break;
-  case envoy::api::v2::Cluster::LOGICAL_DNS:
+  case envoy::api::v2::cluster::Cluster::LOGICAL_DNS:
     new_cluster.reset(new LogicalDnsCluster(cluster, runtime, stats, ssl_context_manager,
                                             selected_dns_resolver, tls, cm, dispatcher,
                                             added_via_api));
     break;
-  case envoy::api::v2::Cluster::ORIGINAL_DST:
-    if (cluster.lb_policy() != envoy::api::v2::Cluster::ORIGINAL_DST_LB) {
+  case envoy::api::v2::cluster::Cluster::ORIGINAL_DST:
+    if (cluster.lb_policy() != envoy::api::v2::cluster::Cluster::ORIGINAL_DST_LB) {
       throw EnvoyException(fmt::format(
           "cluster: cluster type 'original_dst' may only be used with LB type 'original_dst_lb'"));
     }
@@ -201,7 +222,7 @@ ClusterSharedPtr ClusterImplBase::create(const envoy::api::v2::Cluster& cluster,
     new_cluster.reset(new OriginalDstCluster(cluster, runtime, stats, ssl_context_manager, cm,
                                              dispatcher, added_via_api));
     break;
-  case envoy::api::v2::Cluster::EDS:
+  case envoy::api::v2::cluster::Cluster::EDS:
     if (!cluster.has_eds_cluster_config()) {
       throw EnvoyException("cannot create an sds cluster without an sds config");
     }
@@ -226,7 +247,7 @@ ClusterSharedPtr ClusterImplBase::create(const envoy::api::v2::Cluster& cluster,
   return std::move(new_cluster);
 }
 
-ClusterImplBase::ClusterImplBase(const envoy::api::v2::Cluster& cluster,
+ClusterImplBase::ClusterImplBase(const envoy::api::v2::cluster::Cluster& cluster,
                                  const Network::Address::InstanceConstSharedPtr source_address,
                                  Runtime::Loader& runtime, Stats::Store& stats,
                                  Ssl::ContextManager& ssl_context_manager, bool added_via_api)
@@ -285,10 +306,13 @@ bool ClusterInfoImpl::maintenanceMode() const {
   return runtime_.snapshot().featureEnabled(maintenance_mode_runtime_key_, 0);
 }
 
-uint64_t ClusterInfoImpl::parseFeatures(const envoy::api::v2::Cluster& config) {
+uint64_t ClusterInfoImpl::parseFeatures(const envoy::api::v2::cluster::Cluster& config) {
   uint64_t features = 0;
   if (config.has_http2_protocol_options()) {
     features |= Features::HTTP2;
+  }
+  if (config.protocol_selection() == envoy::api::v2::cluster::Cluster::USE_DOWNSTREAM_PROTOCOL) {
+    features |= Features::USE_DOWNSTREAM_PROTOCOL;
   }
   return features;
 }
@@ -390,7 +414,7 @@ void ClusterImplBase::reloadHealthyHosts() {
   }
 }
 
-ClusterInfoImpl::ResourceManagers::ResourceManagers(const envoy::api::v2::Cluster& config,
+ClusterInfoImpl::ResourceManagers::ResourceManagers(const envoy::api::v2::cluster::Cluster& config,
                                                     Runtime::Loader& runtime,
                                                     const std::string& cluster_name) {
   managers_[enumToInt(ResourcePriority::Default)] =
@@ -400,7 +424,7 @@ ClusterInfoImpl::ResourceManagers::ResourceManagers(const envoy::api::v2::Cluste
 }
 
 ResourceManagerImplPtr
-ClusterInfoImpl::ResourceManagers::load(const envoy::api::v2::Cluster& config,
+ClusterInfoImpl::ResourceManagers::load(const envoy::api::v2::cluster::Cluster& config,
                                         Runtime::Loader& runtime, const std::string& cluster_name,
                                         const envoy::api::v2::RoutingPriority& priority) {
   uint64_t max_connections = 1024;
@@ -424,11 +448,11 @@ ClusterInfoImpl::ResourceManagers::load(const envoy::api::v2::Cluster& config,
       fmt::format("circuit_breakers.{}.{}.", cluster_name, priority_name);
 
   const auto& thresholds = config.circuit_breakers().thresholds();
-  const auto it =
-      std::find_if(thresholds.cbegin(), thresholds.cend(),
-                   [priority](const envoy::api::v2::CircuitBreakers::Thresholds& threshold) {
-                     return threshold.priority() == priority;
-                   });
+  const auto it = std::find_if(
+      thresholds.cbegin(), thresholds.cend(),
+      [priority](const envoy::api::v2::cluster::CircuitBreakers::Thresholds& threshold) {
+        return threshold.priority() == priority;
+      });
   if (it != thresholds.cend()) {
     max_connections = PROTOBUF_GET_WRAPPED_OR_DEFAULT(*it, max_connections, max_connections);
     max_pending_requests =
@@ -440,7 +464,7 @@ ClusterInfoImpl::ResourceManagers::load(const envoy::api::v2::Cluster& config,
       runtime, runtime_prefix, max_connections, max_pending_requests, max_requests, max_retries)};
 }
 
-StaticClusterImpl::StaticClusterImpl(const envoy::api::v2::Cluster& cluster,
+StaticClusterImpl::StaticClusterImpl(const envoy::api::v2::cluster::Cluster& cluster,
                                      Runtime::Loader& runtime, Stats::Store& stats,
                                      Ssl::ContextManager& ssl_context_manager, ClusterManager& cm,
                                      bool added_via_api)
@@ -558,7 +582,7 @@ bool BaseDynamicClusterImpl::updateDynamicHostList(const std::vector<HostSharedP
   }
 }
 
-StrictDnsClusterImpl::StrictDnsClusterImpl(const envoy::api::v2::Cluster& cluster,
+StrictDnsClusterImpl::StrictDnsClusterImpl(const envoy::api::v2::cluster::Cluster& cluster,
                                            Runtime::Loader& runtime, Stats::Store& stats,
                                            Ssl::ContextManager& ssl_context_manager,
                                            Network::DnsResolverSharedPtr dns_resolver,
@@ -570,13 +594,13 @@ StrictDnsClusterImpl::StrictDnsClusterImpl(const envoy::api::v2::Cluster& cluste
       dns_refresh_rate_ms_(
           std::chrono::milliseconds(PROTOBUF_GET_MS_OR_DEFAULT(cluster, dns_refresh_rate, 5000))) {
   switch (cluster.dns_lookup_family()) {
-  case envoy::api::v2::Cluster::V6_ONLY:
+  case envoy::api::v2::cluster::Cluster::V6_ONLY:
     dns_lookup_family_ = Network::DnsLookupFamily::V6Only;
     break;
-  case envoy::api::v2::Cluster::V4_ONLY:
+  case envoy::api::v2::cluster::Cluster::V4_ONLY:
     dns_lookup_family_ = Network::DnsLookupFamily::V4Only;
     break;
-  case envoy::api::v2::Cluster::AUTO:
+  case envoy::api::v2::cluster::Cluster::AUTO:
     dns_lookup_family_ = Network::DnsLookupFamily::Auto;
     break;
   default:

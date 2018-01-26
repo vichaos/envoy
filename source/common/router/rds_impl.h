@@ -5,6 +5,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "envoy/api/v2/filter/network/http_connection_manager.pb.h"
+#include "envoy/api/v2/route/route.pb.h"
 #include "envoy/config/subscription.h"
 #include "envoy/http/codes.h"
 #include "envoy/init/init.h"
@@ -12,14 +14,12 @@
 #include "envoy/router/rds.h"
 #include "envoy/router/route_config_provider_manager.h"
 #include "envoy/server/admin.h"
+#include "envoy/service/discovery/v2/rds.pb.h"
 #include "envoy/singleton/instance.h"
 #include "envoy/thread_local/thread_local.h"
 
 #include "common/common/logger.h"
 #include "common/protobuf/utility.h"
-
-#include "api/filter/network/http_connection_manager.pb.h"
-#include "api/rds.pb.h"
 
 namespace Envoy {
 namespace Router {
@@ -45,7 +45,7 @@ public:
  */
 class StaticRouteConfigProviderImpl : public RouteConfigProvider {
 public:
-  StaticRouteConfigProviderImpl(const envoy::api::v2::RouteConfiguration& config,
+  StaticRouteConfigProviderImpl(const envoy::api::v2::route::RouteConfiguration& config,
                                 Runtime::Loader& runtime, Upstream::ClusterManager& cm);
 
   // Router::RouteConfigProvider
@@ -82,7 +82,7 @@ class RouteConfigProviderManagerImpl;
 class RdsRouteConfigProviderImpl
     : public RdsRouteConfigProvider,
       public Init::Target,
-      Envoy::Config::SubscriptionCallbacks<envoy::api::v2::RouteConfiguration>,
+      Envoy::Config::SubscriptionCallbacks<envoy::api::v2::route::RouteConfiguration>,
       Logger::Loggable<Logger::Id::router> {
 public:
   ~RdsRouteConfigProviderImpl();
@@ -128,7 +128,8 @@ private:
 
   Runtime::Loader& runtime_;
   Upstream::ClusterManager& cm_;
-  std::unique_ptr<Envoy::Config::Subscription<envoy::api::v2::RouteConfiguration>> subscription_;
+  std::unique_ptr<Envoy::Config::Subscription<envoy::api::v2::route::RouteConfiguration>>
+      subscription_;
   ThreadLocal::SlotPtr tls_;
   std::string cluster_name_;
   const std::string route_config_name_;
@@ -139,7 +140,7 @@ private:
   std::function<void()> initialize_callback_;
   RouteConfigProviderManagerImpl& route_config_provider_manager_;
   const std::string manager_identifier_;
-  envoy::api::v2::RouteConfiguration route_config_proto_;
+  envoy::api::v2::route::RouteConfiguration route_config_proto_;
 
   friend class RouteConfigProviderManagerImpl;
 };
@@ -166,11 +167,14 @@ private:
    * The handler used in the Admin /routes endpoint. This handler is used to
    * populate the response Buffer::Instance with information about the currently
    * loaded dynamic HTTP Route Tables.
-   * @param url supplies the url sent to the Admin endpoint.
+   * @param path_and_query supplies the url path and query-params sent to the Admin endpoint.
+   * @param response_headers enables setting of http headers (eg content-type, cache-control) in
+   * the handler.
    * @param response supplies the buffer to fill with information.
    * @return Http::Code OK if the endpoint can parse and operate on the url, NotFound otherwise.
    */
-  Http::Code handlerRoutes(const std::string& url, Buffer::Instance& response);
+  Http::Code handlerRoutes(const std::string& path_and_query, Http::HeaderMap& response_headers,
+                           Buffer::Instance& response);
 
   /**
    * Helper function used by handlerRoutes. The function loops through the providers

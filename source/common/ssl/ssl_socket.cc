@@ -3,6 +3,7 @@
 #include "common/common/assert.h"
 #include "common/common/empty_string.h"
 #include "common/common/hex.h"
+#include "common/http/headers.h"
 
 #include "openssl/err.h"
 #include "openssl/x509v3.h"
@@ -62,7 +63,7 @@ Network::IoResult SslSocket::doRead(Buffer::Instance& read_buffer) {
         case SSL_ERROR_WANT_READ:
           break;
         case SSL_ERROR_WANT_WRITE:
-          // Renegotiation has started. We don't handle renegotiation so just fall through.
+        // Renegotiation has started. We don't handle renegotiation so just fall through.
         default:
           drainErrorQueue();
           action = PostIoAction::Close;
@@ -177,7 +178,7 @@ Network::IoResult SslSocket::doWrite(Buffer::Instance& write_buffer) {
           keep_writing = false;
           break;
         case SSL_ERROR_WANT_READ:
-          // Renegotiation has started. We don't handle renegotiation so just fall through.
+        // Renegotiation has started. We don't handle renegotiation so just fall through.
         default:
           drainErrorQueue();
           return {PostIoAction::Close, total_bytes_written};
@@ -224,26 +225,6 @@ std::string SslSocket::sha256PeerCertificateDigest() {
   X509_digest(cert.get(), EVP_sha256(), computed_hash.data(), &n);
   RELEASE_ASSERT(n == computed_hash.size());
   return Hex::encode(computed_hash);
-}
-
-std::string SslSocket::subjectPeerCertificate() const {
-  bssl::UniquePtr<X509> cert(SSL_get_peer_certificate(ssl_.get()));
-  if (!cert) {
-    return "";
-  }
-
-  bssl::UniquePtr<BIO> buf(BIO_new(BIO_s_mem()));
-  RELEASE_ASSERT(buf != nullptr);
-
-  // flags=XN_FLAG_RFC2253 is the documented parameter for single-line output in RFC 2253 format.
-  X509_NAME_print_ex(buf.get(), X509_get_subject_name(cert.get()), 0 /* indent */, XN_FLAG_RFC2253);
-
-  const uint8_t* data;
-  size_t data_len;
-  int rc = BIO_mem_contents(buf.get(), &data, &data_len);
-  ASSERT(rc == 1);
-  UNREFERENCED_PARAMETER(rc);
-  return std::string(reinterpret_cast<const char*>(data), data_len);
 }
 
 std::string SslSocket::uriSanPeerCertificate() {
@@ -301,6 +282,52 @@ std::string SslSocket::protocol() const {
   SSL_get0_alpn_selected(ssl_.get(), &proto, &proto_len);
   return std::string(reinterpret_cast<const char*>(proto), proto_len);
 }
+
+std::string SslSocket::getSubjectFromCertificate(X509* cert) const {
+  bssl::UniquePtr<BIO> buf(BIO_new(BIO_s_mem()));
+  RELEASE_ASSERT(buf != nullptr);
+
+  // flags=XN_FLAG_RFC2253 is the documented parameter for single-line output in RFC 2253 format.
+  // Example from the RFC:
+  //   * Single value per Relative Distinguished Name (RDN): CN=Steve Kille,O=Isode Limited,C=GB
+  //   * Multivalue output in first RDN: OU=Sales+CN=J. Smith,O=Widget Inc.,C=US
+  //   * Quoted comma in Organization: CN=L. Eagle,O=Sue\, Grabbit and Runn,C=GB
+  X509_NAME_print_ex(buf.get(), X509_get_subject_name(cert), 0 /* indent */, XN_FLAG_RFC2253);
+
+  const uint8_t* data;
+  size_t data_len;
+  int rc = BIO_mem_contents(buf.get(), &data, &data_len);
+  ASSERT(rc == 1);
+  UNREFERENCED_PARAMETER(rc);
+  return std::string(reinterpret_cast<const char*>(data), data_len);
+}
+
+std::string SslSocket::subjectPeerCertificate() const {
+  bssl::UniquePtr<X509> cert(SSL_get_peer_certificate(ssl_.get()));
+  if (!cert) {
+    return "";
+  }
+  return getSubjectFromCertificate(cert.get());
+}
+
+std::string SslSocket::subjectLocalCertificate() const {
+  X509* cert = SSL_get_certificate(ssl_.get());
+  if (!cert) {
+    return "";
+  }
+  return getSubjectFromCertificate(cert);
+}
+
+ClientSslSocketFactory::ClientSslSocketFactory(const ClientContextConfig& config,
+                                               Ssl::ContextManager& manager,
+                                               Stats::Scope& stats_scope)
+    : ssl_ctx_(manager.createSslClientContext(stats_scope, config)) {}
+
+Network::TransportSocketPtr ClientSslSocketFactory::createTransportSocket() const {
+  return std::make_unique<Ssl::SslSocket>(*ssl_ctx_, Ssl::InitialState::Client);
+}
+
+bool ClientSslSocketFactory::implementsSecureTransport() const { return true; }
 
 } // namespace Ssl
 } // namespace Envoy
