@@ -108,7 +108,7 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
 
   auth_request_ = config_->cm_.httpAsyncClientForCluster(config_->cluster_)
                       .send(std::move(request_message), *this,
-                            Optional<std::chrono::milliseconds>(config_->timeout_));
+                            absl::optional<std::chrono::milliseconds>(config_->timeout_));
 
   // It'll take some time for our auth call to complete. Stop
   // filtering while we wait for it.
