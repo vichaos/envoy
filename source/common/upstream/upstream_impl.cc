@@ -428,6 +428,21 @@ void ClusterImplBase::reloadHealthyHosts() {
   }
 }
 
+const Network::Address::InstanceConstSharedPtr
+ClusterImplBase::resolveProtoAddress(const envoy::api::v2::core::Address& address) {
+  try {
+    return Network::Address::resolveProtoAddress(address);
+  } catch (EnvoyException& e) {
+    if (info_->type() == envoy::api::v2::Cluster::STATIC ||
+        info_->type() == envoy::api::v2::Cluster::EDS) {
+      throw EnvoyException(fmt::format("{}. Consider setting resolver_name or setting cluster type "
+                                       "to 'STRICT_DNS' or 'LOGICAL_DNS'",
+                                       e.what()));
+    }
+    throw e;
+  }
+}
+
 ClusterInfoImpl::ResourceManagers::ResourceManagers(const envoy::api::v2::Cluster& config,
                                                     Runtime::Loader& runtime,
                                                     const std::string& cluster_name) {
@@ -487,10 +502,9 @@ StaticClusterImpl::StaticClusterImpl(const envoy::api::v2::Cluster& cluster,
       initial_hosts_(new HostVector()) {
 
   for (const auto& host : cluster.hosts()) {
-    initial_hosts_->emplace_back(
-        HostSharedPtr{new HostImpl(info_, "", Network::Address::resolveProtoAddress(host),
-                                   envoy::api::v2::core::Metadata::default_instance(), 1,
-                                   envoy::api::v2::core::Locality().default_instance())});
+    initial_hosts_->emplace_back(HostSharedPtr{new HostImpl(
+        info_, "", resolveProtoAddress(host), envoy::api::v2::core::Metadata::default_instance(), 1,
+        envoy::api::v2::core::Locality().default_instance())});
   }
 }
 
@@ -520,11 +534,12 @@ bool BaseDynamicClusterImpl::updateDynamicHostList(const HostVector& new_hosts,
                                                    HostVector& hosts_removed, bool depend_on_hc) {
   uint64_t max_host_weight = 1;
 
-  // Go through and see if the list we have is different from what we just got. If it is, we
-  // make a new host list and raise a change notification. This uses an N^2 search given that
-  // this does not happen very often and the list sizes should be small. We also check for
-  // duplicates here. It's possible for DNS to return the same address multiple times, and a bad
-  // SDS implementation could do the same thing.
+  // Go through and see if the list we have is different from what we just got. If it is, we make a
+  // new host list and raise a change notification. This uses an N^2 search given that this does not
+  // happen very often and the list sizes should be small (see
+  // https://github.com/envoyproxy/envoy/issues/2874). We also check for duplicates here. It's
+  // possible for DNS to return the same address multiple times, and a bad SDS implementation could
+  // do the same thing.
   std::unordered_set<std::string> host_addresses;
   HostVector final_hosts;
   for (const HostSharedPtr& host : new_hosts) {
