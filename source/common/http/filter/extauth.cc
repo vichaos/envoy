@@ -12,11 +12,11 @@ namespace Http {
 
 namespace {
 
-const LowerCaseString header_to_add() {
+const LowerCaseString& header_to_add() {
   CONSTRUCT_ON_FIRST_USE(LowerCaseString, "x-ambassador-calltype");
 }
 
-const std::string value_to_add() { CONSTRUCT_ON_FIRST_USE(std::string, "extauth-request"); }
+const std::string& value_to_add() { CONSTRUCT_ON_FIRST_USE(std::string, "extauth-request"); }
 
 } // namespace
 
