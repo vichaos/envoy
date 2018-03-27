@@ -6,6 +6,10 @@ load(
     "envoy_cc_library",
     "envoy_package",
 )
+load(
+    "//source/extensions:all_extensions.bzl",
+    "envoy_all_extensions",
+)
 
 envoy_package()
 
@@ -51,7 +55,6 @@ envoy_cc_library(
         "//source/server/config/listener:original_dst_lib",
         "//source/server/config/listener:proxy_protocol_lib",
         "//source/server/config/network:client_ssl_auth_lib",
-        "//source/server/config/network:echo_lib",
         "//source/server/config/network:ext_authz_lib",
         "//source/server/config/network:http_connection_manager_lib",
         "//source/server/config/network:ratelimit_lib",
@@ -63,7 +66,7 @@ envoy_cc_library(
         "//source/server/config/stats:metrics_service_lib",
         "//source/server/config/stats:statsd_lib",
         "//source/server/http:health_check_lib",
-    ],
+    ] + envoy_all_extensions(),
 )
 
 # Non-core HTTP/TCP proxy libraries.
