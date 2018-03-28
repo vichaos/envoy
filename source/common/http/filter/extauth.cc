@@ -78,7 +78,7 @@ FilterHeadersStatus ExtAuth::decodeHeaders(HeaderMap& headers, bool) {
     // Yes, it has. Go ahead and prepend it to the request_message path.
     std::string path;
     absl::StrAppend(&path, config_->path_prefix_,
-                    request_message->headers().insertPath().value().getString());
+                    request_message->headers().insertPath().value().getStringView());
     request_message->headers().insertPath().value(path);
   }
 
