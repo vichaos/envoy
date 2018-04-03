@@ -53,7 +53,6 @@ envoy_cc_library(
         ":printers_includes",
         "//source/common/buffer:buffer_lib",
         "//source/common/http:header_map_lib",
-        "//source/common/redis:codec_lib",
     ],
 )
 
@@ -85,6 +84,16 @@ envoy_cc_test_library(
         "//source/common/network:utility_lib",
         "//source/common/protobuf:utility_lib",
         "@envoy_api//envoy/config/bootstrap/v2:bootstrap_cc",
+    ],
+)
+
+envoy_cc_test_library(
+    name = "logging_lib",
+    srcs = ["logging.cc"],
+    hdrs = ["logging.h"],
+    deps = [
+        "//source/common/common:assert_lib",
+        "//source/common/common:logger_lib",
     ],
 )
 
