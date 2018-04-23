@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-#include "envoy/config/filter/http/ext_authz/v2/ext_authz.pb.validate.h"
+#include "envoy/config/filter/http/ext_authz/v2alpha/ext_authz.pb.validate.h"
 
 #include "common/buffer/buffer_impl.h"
 #include "common/common/empty_string.h"
@@ -65,7 +65,7 @@ public:
   HttpExtAuthzFilterTest() {}
 
   void initialize(const std::string yaml) {
-    envoy::config::filter::http::ext_authz::v2::ExtAuthz proto_config{};
+    envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz proto_config{};
     MessageUtil::loadFromYaml(yaml, proto_config);
     config_.reset(new FilterConfig(proto_config, local_info_, stats_store_, runtime_, cm_));
 
@@ -83,13 +83,13 @@ public:
   )EOF";
 };
 
-typedef envoy::config::filter::http::ext_authz::v2::ExtAuthz CreateFilterConfigFunc();
+typedef envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz CreateFilterConfigFunc();
 
 class HttpExtAuthzFilterParamTest : public TestWithParam<CreateFilterConfigFunc*>,
                                     public HttpExtAuthzFilterTestBase {
 public:
   virtual void SetUp() override {
-    envoy::config::filter::http::ext_authz::v2::ExtAuthz proto_config = (*GetParam())();
+    envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz proto_config = (*GetParam())();
     config_.reset(new FilterConfig(proto_config, local_info_, stats_store_, runtime_, cm_));
 
     client_ = new Filters::Common::ExtAuthz::MockClient();
@@ -100,13 +100,13 @@ public:
 };
 
 template <bool failure_mode_allow_value>
-envoy::config::filter::http::ext_authz::v2::ExtAuthz GetFilterConfig() {
+envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz GetFilterConfig() {
   const std::string yaml = R"EOF(
   grpc_service:
     envoy_grpc:
       cluster_name: "ext_authz_server"
   )EOF";
-  envoy::config::filter::http::ext_authz::v2::ExtAuthz proto_config{};
+  envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz proto_config{};
   MessageUtil::loadFromYaml(yaml, proto_config);
   proto_config.set_failure_mode_allow(failure_mode_allow_value);
   return proto_config;
@@ -247,13 +247,12 @@ TEST_F(HttpExtAuthzFilterTest, BadConfig) {
   grpc_service: {}
   )EOF";
 
-  envoy::config::filter::http::ext_authz::v2::ExtAuthz proto_config{};
+  envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz proto_config{};
   MessageUtil::loadFromYaml(filter_config, proto_config);
 
-  EXPECT_THROW(
-      MessageUtil::downcastAndValidate<const envoy::config::filter::http::ext_authz::v2::ExtAuthz&>(
-          proto_config),
-      ProtoValidationException);
+  EXPECT_THROW(MessageUtil::downcastAndValidate<
+                   const envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz&>(proto_config),
+               ProtoValidationException);
 }
 
 // Test when failure_mode_allow is NOT set and the response from the authorization service is Error
@@ -310,6 +309,34 @@ TEST_F(HttpExtAuthzFilterTest, ErrorOpen) {
   EXPECT_EQ(
       1U,
       cm_.thread_local_cluster_.cluster_.info_->stats_store_.counter("ext_authz.error").value());
+}
+
+// Test when failure_mode_allow is set and the response from the authorization service is an
+// immediate Error that the request is allowed to continue.
+TEST_F(HttpExtAuthzFilterTest, ImmediateErrorOpen) {
+  initialize(filter_config_);
+  InSequence s;
+
+  ON_CALL(filter_callbacks_, connection()).WillByDefault(Return(&connection_));
+  EXPECT_CALL(connection_, remoteAddress()).WillOnce(ReturnRef(addr_));
+  EXPECT_CALL(connection_, localAddress()).WillOnce(ReturnRef(addr_));
+  EXPECT_CALL(*client_, check(_, _, _))
+      .WillOnce(
+          WithArgs<0>(Invoke([&](Filters::Common::ExtAuthz::RequestCallbacks& callbacks) -> void {
+            callbacks.onComplete(Filters::Common::ExtAuthz::CheckStatus::Error);
+          })));
+
+  EXPECT_CALL(filter_callbacks_, continueDecoding()).Times(0);
+  EXPECT_EQ(Http::FilterHeadersStatus::Continue, filter_->decodeHeaders(request_headers_, false));
+  EXPECT_EQ(Http::FilterDataStatus::Continue, filter_->decodeData(data_, false));
+  EXPECT_EQ(Http::FilterTrailersStatus::Continue, filter_->decodeTrailers(request_headers_));
+
+  EXPECT_EQ(
+      1U,
+      cm_.thread_local_cluster_.cluster_.info_->stats_store_.counter("ext_authz.error").value());
+  EXPECT_EQ(1U, cm_.thread_local_cluster_.cluster_.info_->stats_store_
+                    .counter("ext_authz.failure_mode_allowed")
+                    .value());
 }
 
 } // namespace ExtAuthz

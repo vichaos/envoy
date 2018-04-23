@@ -37,26 +37,6 @@ envoy_cc_library(
         "//source/server:options_lib",
         "//source/server:server_lib",
         "//source/server:test_hooks_lib",
-        "//source/server/config/access_log:file_access_log_lib",
-        "//source/server/config/access_log:grpc_access_log_lib",
-        "//source/server/config/http:buffer_lib",
-        "//source/server/config/http:cors_lib",
-        "//source/server/config/http:extauth_lib",
-        "//source/server/config/http:ext_authz_lib",
-        "//source/server/config/http:fault_lib",
-        "//source/server/config/http:grpc_http1_bridge_lib",
-        "//source/server/config/http:grpc_json_transcoder_lib",
-        "//source/server/config/http:grpc_web_lib",
-        "//source/server/config/http:gzip_lib",
-        "//source/server/config/http:ip_tagging_lib",
-        "//source/server/config/http:router_lib",
-        "//source/server/config/network:http_connection_manager_lib",
-        "//source/server/config/network:raw_buffer_socket_lib",
-        "//source/server/config/network:ssl_socket_lib",
-        "//source/server/config/stats:dog_statsd_lib",
-        "//source/server/config/stats:metrics_service_lib",
-        "//source/server/config/stats:statsd_lib",
-        "//source/server/http:health_check_lib",
     ] + envoy_all_extensions(),
 )
 
@@ -65,9 +45,6 @@ envoy_cc_library(
     srcs = ["main.cc"],
     deps = [
         ":envoy_main_common_lib",
-        "//source/server/config/http:dynamic_opentracing_lib",
-        "//source/server/config/http:lightstep_lib",
-        "//source/server/config/http:zipkin_lib",
     ],
 )
 

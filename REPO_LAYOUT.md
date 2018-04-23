@@ -5,11 +5,12 @@ as well as to clearly specify how extensions are added to the repository. The to
 are:
 
 * [.circleci/](.circleci/): Configuration for [CircleCI](https://circleci.com/gh/envoyproxy).
+* [api/](api/): Envoy data plane API.
 * [bazel/](bazel/): Configuration for Envoy's use of [Bazel](https://bazel.build/).
 * [ci/](ci/): Scripts used both during CI as well as to build Docker containers.
 * [configs/](configs/): Example Envoy configurations.
-* [docs/](docs/): Project level documentation as well as scripts for publishing final docs during
-  releases.
+* [docs/](docs/): End user facing Envoy proxy and data plane API documentation as well as scripts
+  for publishing final docs during releases.
 * [examples/](examples/): Larger Envoy examples using Docker and Docker Compose.
 * [include/](include/): "Public" interface headers for "core" Envoy. In general,
   these are almost entirely 100% abstract classes. There are a few cases of not-abstract classes in
@@ -65,24 +66,29 @@ code/extensions, and also will allow us in the future to more easily scale out o
 maintainers by having OWNERS files specific to certain extensions. (As of this writing, this is not
 currently implemented but that is the plan moving forward.)
 
-* All extensions are registered in [all_extensions.bzl](source/extensions/all_extensions.bzl). In
-  the future this mechanism will easily allow us to compile out extensions based on build system
-  configuration. This is not currently implemented but is the plan moving forward.
+* All extensions are either registered in [all_extensions.bzl](source/extensions/all_extensions.bzl)
+  or [extensions_build_config.bzl](source/extensions/extensions_build_config.bzl). The former is
+  for extensions that cannot be removed from the primary Envoy build. The latter is for extensions
+  that can be removed on a site specific basis. See [bazel/README.md](bazel/README.md) for how to
+  compile out extensions on a site specific basis. Note that by default extensions should be
+  removable from the build unless there is a very good reason.
 * These are the top level extension directories and associated namespaces:
   * [access_loggers/](/source/extensions/access_loggers): Access log implementations which use
     the `Envoy::Extensions::AccessLoggers` namespace.
-  * [http_tracers/](/source/extensions/http_tracers): HTTP tracers which use the
-    `Envoy::Extensions::HttpTracers` namespace.
   * [filters/http/](/source/extensions/filters/http): HTTP L7 filters which use the
     `Envoy::Extensions::HttpFilters` namespace.
   * [filters/listener/](/source/extensions/filters/listener): Listener filters which use the
     `Envoy::Extensions::ListenerFilters` namespace.
   * [filters/network/](/source/extensions/filters/network): L4 network filters which use the
     `Envoy::Extensions::NetworkFilters` namespace.
+  * [health_checker/](/source/extensions/health_checker): Custom health checkers which use the
+    `Envoy::Extensions::HealthCheckers` namespace.
   * [resolvers/](/source/extensions/resolvers): Network address resolvers which use the
     `Envoy::Extensions::Resolvers` namespace.
   * [stat_sinks/](/source/extensions/stat_sinks): Stat sink implementations which use the
     `Envoy::Extensions::StatSinks` namespace.
+  * [tracers/](/source/extensions/tracers): Tracers which use the
+    `Envoy::Extensions::Tracers` namespace.
   * [transport_sockets/](/source/extensions/transport_sockets): Transport socket implementations
     which use the `Envoy::Extensions::TransportSockets` namespace.
 * Each extension is contained wholly in its own namespace. E.g.,
