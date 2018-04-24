@@ -27,7 +27,8 @@ namespace ExtAuthz {
 #define ALL_TCP_EXT_AUTHZ_STATS(COUNTER, GAUGE)         \
   COUNTER(total)                                        \
   COUNTER(error)                                        \
-  COUNTER(denied)                                      \
+  COUNTER(denied)                                       \
+  COUNTER(failure_mode_allowed)                         \
   COUNTER(ok)                                           \
   COUNTER(cx_closed)                                    \
   GAUGE  (active)
@@ -100,7 +101,7 @@ private:
   Network::ReadFilterCallbacks* filter_callbacks_{};
   Status status_{Status::NotStarted};
   bool calling_check_{};
-  envoy::service::auth::v2::CheckRequest check_request_{};
+  envoy::service::auth::v2alpha::CheckRequest check_request_{};
 };
 }
 } // namespace NetworkFilters

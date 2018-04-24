@@ -84,7 +84,7 @@ InstanceImpl::~InstanceImpl() {
   file_logger_.reset();
 }
 
-Upstream::ClusterManager& InstanceImpl::clusterManager() { return config_->clusterManager(); }
+Upstream::ClusterManager& InstanceImpl::clusterManager() { return *config_->clusterManager(); }
 
 Tracing::HttpTracer& InstanceImpl::httpTracer() { return config_->httpTracer(); }
 
@@ -186,6 +186,29 @@ void InstanceImpl::initialize(Options& options,
                               ComponentFactory& component_factory) {
   ENVOY_LOG(info, "initializing epoch {} (hot restart version={})", options.restartEpoch(),
             restarter_.version());
+
+  ENVOY_LOG(info, "statically linked extensions:");
+  ENVOY_LOG(info, "  access_loggers: {}",
+            Registry::FactoryRegistry<Configuration::AccessLogInstanceFactory>::allFactoryNames());
+  ENVOY_LOG(
+      info, "  filters.http: {}",
+      Registry::FactoryRegistry<Configuration::NamedHttpFilterConfigFactory>::allFactoryNames());
+  ENVOY_LOG(info, "  filters.listener: {}",
+            Registry::FactoryRegistry<
+                Configuration::NamedListenerFilterConfigFactory>::allFactoryNames());
+  ENVOY_LOG(
+      info, "  filters.network: {}",
+      Registry::FactoryRegistry<Configuration::NamedNetworkFilterConfigFactory>::allFactoryNames());
+  ENVOY_LOG(info, "  stat_sinks: {}",
+            Registry::FactoryRegistry<Configuration::StatsSinkFactory>::allFactoryNames());
+  ENVOY_LOG(info, "  tracers: {}",
+            Registry::FactoryRegistry<Configuration::TracerFactory>::allFactoryNames());
+  ENVOY_LOG(info, "  transport_sockets.downstream: {}",
+            Registry::FactoryRegistry<
+                Configuration::DownstreamTransportSocketConfigFactory>::allFactoryNames());
+  ENVOY_LOG(info, "  transport_sockets.upstream: {}",
+            Registry::FactoryRegistry<
+                Configuration::UpstreamTransportSocketConfigFactory>::allFactoryNames());
 
   // Handle configuration that needs to take place prior to the main configuration load.
   envoy::config::bootstrap::v2::Bootstrap bootstrap;
@@ -394,8 +417,8 @@ void InstanceImpl::terminate() {
     flushStats();
   }
 
-  if (config_.get() != nullptr) {
-    config_->clusterManager().shutdown();
+  if (config_.get() != nullptr && config_->clusterManager() != nullptr) {
+    config_->clusterManager()->shutdown();
   }
   handler_.reset();
   thread_local_.shutdownThread();

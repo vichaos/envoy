@@ -3,6 +3,7 @@ licenses(["notice"])  # Apache 2
 load(
     "//bazel:envoy_build_system.bzl",
     "envoy_cc_test",
+    "envoy_cc_test_library",
     "envoy_package",
 )
 
@@ -84,6 +85,7 @@ envoy_cc_test(
         "//source/common/upstream:upstream_includes",
         "//source/common/upstream:upstream_lib",
         "//source/extensions/filters/network/ratelimit:ratelimit_lib",
+        "//source/extensions/filters/network/tcp_proxy",
         "//test/common/upstream:utility_lib",
         "//test/mocks/buffer:buffer_mocks",
         "//test/mocks/network:network_mocks",
@@ -151,15 +153,25 @@ envoy_cc_test(
     ],
 )
 
+envoy_cc_test_library(
+    name = "socket_option_test_harness",
+    srcs = ["socket_option_test_harness.h"],
+    deps = [
+        "//source/common/network:address_lib",
+        "//source/common/network:socket_option_lib",
+        "//source/server:listener_socket_option_lib",
+        "//test/mocks/api:api_mocks",
+        "//test/mocks/network:network_mocks",
+        "//test/test_common:logging_lib",
+        "//test/test_common:threadsafe_singleton_injector_lib",
+    ],
+)
+
 envoy_cc_test(
     name = "socket_option_impl_test",
     srcs = ["socket_option_impl_test.cc"],
     deps = [
-        "//source/common/network:address_lib",
-        "//source/common/network:socket_option_lib",
-        "//test/mocks/api:api_mocks",
-        "//test/mocks/network:network_mocks",
-        "//test/test_common:threadsafe_singleton_injector_lib",
+        ":socket_option_test_harness",
     ],
 )
 
