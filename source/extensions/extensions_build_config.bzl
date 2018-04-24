@@ -32,6 +32,7 @@ EXTENSIONS = {
     "envoy.filters.http.ratelimit":                     "//source/extensions/filters/http/ratelimit:config",
     "envoy.filters.http.router":                        "//source/extensions/filters/http/router:config",
     "envoy.filters.http.squash":                        "//source/extensions/filters/http/squash:config",
+    "envoy.filters.http.extauthz":                        "//source/extensions/filters/http/extauthz:config",
 
     #
     # Listener filters
