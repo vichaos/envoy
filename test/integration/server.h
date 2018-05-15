@@ -39,29 +39,31 @@ public:
         service_zone_("zone_name") {}
 
   // Server::Options
-  uint64_t baseId() override { return 0; }
-  uint32_t concurrency() override { return 1; }
-  const std::string& configPath() override { return config_path_; }
-  const std::string& configYaml() override { return config_yaml_; }
-  bool v2ConfigOnly() override { return false; }
-  const std::string& adminAddressPath() override { return admin_address_path_; }
-  Network::Address::IpVersion localAddressIpVersion() override { return local_address_ip_version_; }
-  std::chrono::seconds drainTime() override { return std::chrono::seconds(1); }
-  spdlog::level::level_enum logLevel() override { NOT_IMPLEMENTED; }
-  const std::string& logFormat() override { NOT_IMPLEMENTED; }
-  std::chrono::seconds parentShutdownTime() override { return std::chrono::seconds(2); }
-  const std::string& logPath() override { return log_path_; }
-  uint64_t restartEpoch() override { return 0; }
-  std::chrono::milliseconds fileFlushIntervalMsec() override {
+  uint64_t baseId() const override { return 0; }
+  uint32_t concurrency() const override { return 1; }
+  const std::string& configPath() const override { return config_path_; }
+  const std::string& configYaml() const override { return config_yaml_; }
+  bool v2ConfigOnly() const override { return false; }
+  const std::string& adminAddressPath() const override { return admin_address_path_; }
+  Network::Address::IpVersion localAddressIpVersion() const override {
+    return local_address_ip_version_;
+  }
+  std::chrono::seconds drainTime() const override { return std::chrono::seconds(1); }
+  spdlog::level::level_enum logLevel() const override { NOT_IMPLEMENTED; }
+  const std::string& logFormat() const override { NOT_IMPLEMENTED; }
+  std::chrono::seconds parentShutdownTime() const override { return std::chrono::seconds(2); }
+  const std::string& logPath() const override { return log_path_; }
+  uint64_t restartEpoch() const override { return 0; }
+  std::chrono::milliseconds fileFlushIntervalMsec() const override {
     return std::chrono::milliseconds(50);
   }
   Mode mode() const override { return Mode::Serve; }
-  const std::string& serviceClusterName() override { return service_cluster_name_; }
-  const std::string& serviceNodeName() override { return service_node_name_; }
-  const std::string& serviceZone() override { return service_zone_; }
-  uint64_t maxStats() override { return 16384; }
-  uint64_t maxObjNameLength() override { return 60; }
-  bool hotRestartDisabled() override { return false; }
+  const std::string& serviceClusterName() const override { return service_cluster_name_; }
+  const std::string& serviceNodeName() const override { return service_node_name_; }
+  const std::string& serviceZone() const override { return service_zone_; }
+  uint64_t maxStats() const override { return 16384; }
+  uint64_t maxObjNameLength() const override { return 60; }
+  bool hotRestartDisabled() const override { return false; }
 
   // asConfigYaml returns a new config that empties the configPath() and populates configYaml()
   Server::TestOptionsImpl asConfigYaml();
@@ -176,11 +178,17 @@ public:
     return store_.gauges();
   }
 
+  std::list<ParentHistogramSharedPtr> histograms() const override {
+    std::unique_lock<std::mutex> lock(lock_);
+    return store_.histograms();
+  }
+
   // Stats::StoreRoot
   void addSink(Sink&) override {}
   void setTagProducer(TagProducerPtr&&) override {}
   void initializeThreading(Event::Dispatcher&, ThreadLocal::Instance&) override {}
   void shutdownThreading() override {}
+  void mergeHistograms(PostMergeCb) override {}
 
 private:
   mutable std::mutex lock_;
@@ -202,7 +210,8 @@ class IntegrationTestServer : Logger::Loggable<Logger::Id::testing>,
 public:
   static IntegrationTestServerPtr create(const std::string& config_path,
                                          const Network::Address::IpVersion version,
-                                         std::function<void()> pre_worker_start_test_steps);
+                                         std::function<void()> pre_worker_start_test_steps,
+                                         bool deterministic);
   ~IntegrationTestServer();
 
   Server::TestDrainManager& drainManager() { return *drain_manager_; }
@@ -217,7 +226,7 @@ public:
     on_worker_listener_removed_cb_ = on_worker_listener_removed;
   }
   void start(const Network::Address::IpVersion version,
-             std::function<void()> pre_worker_start_test_steps);
+             std::function<void()> pre_worker_start_test_steps, bool deterministic);
   void start();
 
   void waitForCounterGe(const std::string& name, uint64_t value) override {
@@ -275,7 +284,7 @@ private:
   /**
    * Runs the real server on a thread.
    */
-  void threadRoutine(const Network::Address::IpVersion version);
+  void threadRoutine(const Network::Address::IpVersion version, bool deterministic);
 
   const std::string config_path_;
   Thread::ThreadPtr thread_;
