@@ -269,7 +269,7 @@ void ExtAuth::onFailure(Http::AsyncClient::FailureReason) {
   request_headers_ = nullptr;
   ENVOY_STREAM_LOG(warn, "ExtAuth Auth request failed", *callbacks_);
   config_->stats_.rq_failed_.inc();
-  Http::Utility::sendLocalReply(*callbacks_, false, Http::Code::ServiceUnavailable,
+  Http::Utility::sendLocalReply(false, *callbacks_, false, Http::Code::ServiceUnavailable,
                                 std::string("Auth request failed."));
 }
 
