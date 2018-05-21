@@ -31,7 +31,7 @@ const std::string EXTAUTH_HTTP_FILTER_SCHEMA(R"EOF(
   }
   )EOF");
 
-HttpFilterFactoryCb ExtAuthConfig::createFilterFactory(const Json::Object& json_config,
+Http::FilterFactoryCb ExtAuthConfig::createFilterFactory(const Json::Object& json_config,
                                                        const std::string& stats_prefix,
                                                        FactoryContext& context) {
   json_config.validateSchema(EXTAUTH_HTTP_FILTER_SCHEMA);
