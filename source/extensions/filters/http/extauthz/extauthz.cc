@@ -235,6 +235,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
           ENVOY_STREAM_LOG(trace, "ExtAuth allowing response header {}: {}", *callbacks_,
                            allowed_header, valstr);
           addedHeaders = true;
+          request_headers_->remove(key);
           request_headers_->addCopy(key, valstr);
         }
       }
