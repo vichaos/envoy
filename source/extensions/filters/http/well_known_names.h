@@ -42,6 +42,8 @@ public:
   const std::string SQUASH = "envoy.squash";
   // External Authorization filter
   const std::string EXT_AUTHORIZATION = "envoy.ext_authz";
+  // RBAC HTTP Authorization filter
+  const std::string RBAC = "envoy.filters.http.rbac";
   // Ambassador External Authorization filter
   const std::string EXTAUTHORIZATION = "envoy.extauthz";
 
