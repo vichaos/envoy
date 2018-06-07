@@ -2,82 +2,122 @@
 
 **THIS WILL ALL GO AWAY** after the upstream merge. But it's handy for now.
 
-## Git Wrangling
+## Overview
 
-Set up your upstream with
+`datawire/envoy` is the GitHub repo for the Datawire fork of Envoy. Within it, there are two branches:
 
-```
-git remote add -t master upstream git@github.com:lyft/envoy.git
-```
+- `datawire/extauth` has the code changes to support our `extauth` work.
+- `datawire/extauth-build-automation` has the supporting docs and scripting to build and test our `extauth` work.
 
-Pull any upstream changes in with (from your `master` branch)
+**At all times, `extauth-build-automation` must contain all of the changes in `extauth`.** Everything will break if you don't do this.
 
-```
-git fetch upstream
-git merge upstream/master
-git push
-```
+## Initial Setup
 
-## Setup
+- After cloning, set up your upstream with
 
-Everything we use for Datawire's build is in the DATAWIRE directory, so get used to `cd`'ing there:
+    ```
+    git remote add -t master upstream git@github.com:envoyproxy/envoy.git
+    ```
 
-```
-cd DATAWIRE
-```
+- When you get to the testing part of the world, you'll need Python 3 with Flask and Requests installed.
 
-When you get to the testing part of the world, you'll need Python 3 with Flask installed.
+- Everything we use for Datawire's build is in the DATAWIRE directory, so get used to `cd`'ing there:
+
+    ```
+    cd DATAWIRE
+    ```
+
+## Updating With Changes From Upstream
+
+Note that part of this procedure has you on branches other than `datawire/extauth-build-automation`, which means that these instructions will disappear. Keeping it open in an editor or browser is one solution. Two clones is another. None of these are great.
+
+- Start on your local `master` branch:
+
+    ```
+    git checkout master
+    ```
+
+- Pull any upstream changes in:
+
+    ```
+    git fetch upstream
+    git merge upstream/master
+    git push
+    ```
+
+- Review changes here if it seems relevant.
+
+- Next, merge into the `datawire/extauth` branch:
+
+    ```
+    git checkout datawire/extauth
+    git merge master
+    git push
+    ```
+
+- Next, wrangle `datawire/extauth-build-automation`:
+
+    ```
+    git checkout datawire/extauth-build-automation
+    git merge datawire/extauth
+    git push
+    ```
 
 ## Building
 
-Be in the DATAWIRE directory, then
+Be in the `DATAWIRE` directory, then
 
 ```
 sh run_builder_bash.sh
 ```
 
-will fire up a Docker container with the build environment and give you a shell. If you exit out of it,
+This will fire up a Docker container with the build environment and give you a shell. If you exit out of the build container, you can restart it with state preserved using
 
 ```
 docker start -i -a envoy-build
 ```
 
-will restart it with state preserved.
-
-Inside the container, the whole `datawire/envoy` tree from the host is mounted on `/xfer` -- however, on a Mac at least, just running the build in `/xfer` is glacially slow. Instead, we have scripts to rsync the sources from the host into the container's disk, and build there. 
-
-To do that:
+Inside the container, the whole `datawire/envoy` tree from the host is mounted on `/xfer` -- however, on a Mac at least, just running the build in `/xfer` is glacially slow. Instead, we have scripts to rsync the sources from the host into the container's disk at `~/envoy`, and build there:
 
 ```
-cd ~/envoy
 sh /xfer/DATAWIRE/go.sh
 ```
 
-Once the build is finished, `go.sh` will copy the final result out to `/xfer/ci/envoy-static-build`, and you'll see it from the host side as `ci/envoy-static-build` in your `datawire/envoy` directory.
+**This may well fail the first time in a new container** -- there's some weirdness with Bazel and external dependencies. If you get a failure complaining about external dependencies, run it again.
+
+Once the build is finished, your newly-built Envoy will be visible in the container  as `/xfer/ci/envoy-static-build`, and from the host as `ci/envoy-static-build` in your `datawire/envoy` directory. **Note well: the built Envoy is _not_ in the `DATAWIRE` directory.**
 
 ## Testing
 
-Once you have a good build, open a new window, get back to the `DATAWiRE` directory, and run
+Once you have a good build:
 
-```
-python simple-auth-server.py
-```
+1. **On the host**:
+   - you'll need an idle window, Python 3, and Flask
+   - get back to the `DATAWIRE` directory
+   - run the test extauth service:
 
-**Note well**: do this from the host, not the container. You'll need Python 3 and Flask.
+    ```
+    python simple-auth-server.py
+    ```
 
-Once the auth service is running, back in the container (from `~/envoy`) do
+2. **In the container**:
+   - start the test Envoy running (it listens on port 9999 and uses the Envoy config in `DATAWIRE/envoy-test.json`)
 
-```
-sh DATAWIRE/envoy-test.sh
-```
+    ```
+    cd ~/envoy
+    sh DATAWIRE/envoy-test.sh
+    ```
 
-to start a test envoy listening on port 9999 (the Envoy config is in `envoy-test.json`).
+3. **On the host**:
+   - you'll need another idle window, Python 3, and Requests
+   - get back to the `DATAWIRE` directory
+   - start the authentication test:
 
-At that point, you can use the `authtest.py` script to check things out (from outside the container again):
+    ```
+    python authtest.py http://localhost:9999 test-1.yaml
+    ```
 
-```
-python authtest.py http://localhost:9999 test-1.yaml
-```
+   - `authtest.py` will run several loops and generate a lot of output. Make sure it doesn't say anything failed.
 
 ## Formatting
 
