@@ -16,7 +16,7 @@ cd ~/envoy
 # bazel "$BAZELCMD" --verbose_failures -c dbg --config=clang-asan "$TARGET"
 bazel "$BAZELCMD" --verbose_failures -c dbg "$TARGET"
 
-rm /xfer/ci/envoy-static-binary
+rm -f /xfer/ci/envoy-static-binary
 cp bazel-bin/source/exe/envoy-static /xfer/ci/envoy-static-binary
 strip bazel-bin/source/exe/envoy-static -o bazel-bin/source/exe/envoy-stripped
 cp bazel-bin/source/exe/envoy-stripped /xfer/ci/envoy-stripped-binary

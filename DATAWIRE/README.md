@@ -102,6 +102,8 @@ Once you have a good build:
 
 2. **In the container**:
    - start the test Envoy running (it listens on port 9999 and uses the Envoy config in `DATAWIRE/envoy-test.json`)
+   - **IMPORTANT NOTE** If you're on Linux then you need to modify `envoy-test.json` to use `tcp://localhost:3000` instead of `tcp://docker.for.mac.localhost:3000`
+
 
     ```
     cd ~/envoy
@@ -124,7 +126,8 @@ Once you have a good build:
 Envoy is draconian about formatting. Once you're feeling good about the build, from inide the container you can run
 
 ```
-python tools/check_format.py fix
+cd ~/envoy
+BUILDIFIER_BIN=/usr/local/bin/buildifier python tools/check_format.py fix
 ```
 
 to make sure the source formatting matches Envoy's draconian rules. You'll have to copy any changed files out to `/xfer` by hand, sadly.
