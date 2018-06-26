@@ -102,7 +102,7 @@ Once you have a good build:
 
 2. **In the container**:
    - start the test Envoy running (it listens on port 9999 and uses the Envoy config in `DATAWIRE/envoy-test.json`)
-   - **IMPORTANT NOTE** If you're on Linux then you need to modify `envoy-test.json` to use `tcp://localhost:3000` instead of `tcp://host.docker.internal:3000`
+   - **IMPORTANT NOTE** If you're on Linux then you need to modify `envoy-test.json` to use `tcp://localhost:3000` instead of `tcp://docker.for.mac.localhost:3000`
 
 
     ```
