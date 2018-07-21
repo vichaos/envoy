@@ -162,7 +162,7 @@ void ExtAuth::onSuccess(Http::MessagePtr&& response) {
 
   ENVOY_STREAM_LOG(trace, "ExtAuth Auth responded with code {}", *callbacks_, response_code);
 
-  if (!response->body()->length()) {
+  if (response->body() && !response->body()->length()) {
     ENVOY_STREAM_LOG(trace, "ExtAuth Auth said: {}", *callbacks_, response->bodyAsString());
   }
 
