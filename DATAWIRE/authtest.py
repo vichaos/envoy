@@ -38,6 +38,11 @@ class HTTPTest (object):
         url, args = self.build(path=path)
 
         return self.decipher(requests.get(url, **args))
+    
+    def head(self, path=''):
+        url, args = self.build(path=path)
+
+        return self.decipher(requests.head(url, **args))
 
     def put(self, path=''):
         url, args = self.build(path=path)

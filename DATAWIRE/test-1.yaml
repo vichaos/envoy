@@ -15,3 +15,8 @@ tests:
 - name: Auth and header
   path: /good/
   expect: 200
+
+- name: Auth with HEAD method 
+  method: head
+  path: /good/
+  expect: 200
