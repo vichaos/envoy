@@ -16,10 +16,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
-using testing::_;
 
 namespace Envoy {
 namespace AccessLog {
@@ -74,6 +74,28 @@ TEST(AccessLogFormatterTest, requestInfoFormatter) {
   }
 
   {
+    RequestInfoFormatter ttlb_duration_format("RESPONSE_TX_DURATION");
+
+    absl::optional<std::chrono::nanoseconds> dur_upstream = std::chrono::nanoseconds(10000000);
+    EXPECT_CALL(request_info, firstUpstreamRxByteReceived()).WillRepeatedly(Return(dur_upstream));
+    absl::optional<std::chrono::nanoseconds> dur_downstream = std::chrono::nanoseconds(25000000);
+    EXPECT_CALL(request_info, lastDownstreamTxByteSent()).WillRepeatedly(Return(dur_downstream));
+
+    EXPECT_EQ("15", ttlb_duration_format.format(header, header, header, request_info));
+  }
+
+  {
+    RequestInfoFormatter ttlb_duration_format("RESPONSE_TX_DURATION");
+
+    absl::optional<std::chrono::nanoseconds> dur_upstream;
+    EXPECT_CALL(request_info, firstUpstreamRxByteReceived()).WillRepeatedly(Return(dur_upstream));
+    absl::optional<std::chrono::nanoseconds> dur_downstream;
+    EXPECT_CALL(request_info, lastDownstreamTxByteSent()).WillRepeatedly(Return(dur_downstream));
+
+    EXPECT_EQ("-", ttlb_duration_format.format(header, header, header, request_info));
+  }
+
+  {
     RequestInfoFormatter bytes_received_format("BYTES_RECEIVED");
     EXPECT_CALL(request_info, bytesReceived()).WillOnce(Return(1));
     EXPECT_EQ("1", bytes_received_format.format(header, header, header, request_info));
@@ -115,7 +137,7 @@ TEST(AccessLogFormatterTest, requestInfoFormatter) {
 
   {
     RequestInfoFormatter response_flags_format("RESPONSE_FLAGS");
-    ON_CALL(request_info, getResponseFlag(RequestInfo::ResponseFlag::LocalReset))
+    ON_CALL(request_info, hasResponseFlag(RequestInfo::ResponseFlag::LocalReset))
         .WillByDefault(Return(true));
     EXPECT_EQ("LR", response_flags_format.format(header, header, header, request_info));
   }
@@ -162,6 +184,22 @@ TEST(AccessLogFormatterTest, requestInfoFormatter) {
   {
     RequestInfoFormatter upstream_format("DOWNSTREAM_REMOTE_ADDRESS");
     EXPECT_EQ("127.0.0.1:0", upstream_format.format(header, header, header, request_info));
+  }
+
+  {
+    RequestInfoFormatter upstream_format("REQUESTED_SERVER_NAME");
+    std::string requested_server_name = "stub_server";
+    EXPECT_CALL(request_info, requestedServerName())
+        .WillRepeatedly(ReturnRef(requested_server_name));
+    EXPECT_EQ("stub_server", upstream_format.format(header, header, header, request_info));
+  }
+
+  {
+    RequestInfoFormatter upstream_format("REQUESTED_SERVER_NAME");
+    std::string requested_server_name;
+    EXPECT_CALL(request_info, requestedServerName())
+        .WillRepeatedly(ReturnRef(requested_server_name));
+    EXPECT_EQ("-", upstream_format.format(header, header, header, request_info));
   }
 }
 
@@ -409,6 +447,20 @@ TEST(AccessLogFormatterTest, CompositeFormatterSuccess) {
 
     EXPECT_EQ(fmt::format("2018/03/28|{}|bad_format|2018-03-28T23:35:58.000Z|000000000.0.00.000",
                           expected_time_t),
+              formatter.format(request_header, response_header, response_trailer, request_info));
+  }
+
+  {
+    // This tests the beginning of time.
+    const std::string format = "%START_TIME(%Y/%m/%d)%|%START_TIME(%s)%|%START_TIME(bad_format)%|"
+                               "%START_TIME%|%START_TIME(%f.%1f.%2f.%3f)%";
+
+    const time_t test_epoch = 0;
+    const SystemTime time = std::chrono::system_clock::from_time_t(test_epoch);
+    EXPECT_CALL(request_info, startTime()).WillRepeatedly(Return(time));
+    FormatterImpl formatter(format);
+
+    EXPECT_EQ("1970/01/01|0|bad_format|1970-01-01T00:00:00.000Z|000000000.0.00.000",
               formatter.format(request_header, response_header, response_trailer, request_info));
   }
 

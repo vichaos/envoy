@@ -9,11 +9,12 @@ curl -L -o /etc/yum.repos.d/alonid-llvm-5.0.0-epel-7.repo \
 
 # dependencies for bazel and build_recipes
 yum install -y java-1.8.0-openjdk-devel unzip which openssl rpm-build \
-               cmake3 devtoolset-4-gcc-c++ git golang libtool make patch rsync wget \
+               cmake3 devtoolset-4-gcc-c++ git golang libtool make ninja-build patch rsync wget \
                clang-5.0.0 devtoolset-4-libatomic-devel llvm-5.0.0 python-virtualenv bc
 yum clean all
 
 ln -s /usr/bin/cmake3 /usr/bin/cmake
+ln -s /usr/bin/ninja-build /usr/bin/ninja
 
 # latest bazel installer
 BAZEL_VERSION="$(curl -s https://api.github.com/repos/bazelbuild/bazel/releases/latest |

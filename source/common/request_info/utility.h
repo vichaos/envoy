@@ -14,6 +14,7 @@ namespace RequestInfo {
 class ResponseFlagUtils {
 public:
   static const std::string toShortString(const RequestInfo& request_info);
+  static absl::optional<ResponseFlag> toResponseFlag(const std::string& response_flag);
 
 private:
   ResponseFlagUtils();
@@ -33,6 +34,7 @@ private:
   const static std::string FAULT_INJECTED;
   const static std::string RATE_LIMITED;
   const static std::string UNAUTHORIZED_EXTERNAL_SERVICE;
+  const static std::string RATELIMIT_SERVICE_ERROR;
 };
 
 /**

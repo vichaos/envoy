@@ -3,19 +3,23 @@
 #include <chrono>
 #include <cstdint>
 
+#include "envoy/common/time.h"
 #include "envoy/request_info/request_info.h"
 
 #include "common/common/assert.h"
+#include "common/request_info/filter_state_impl.h"
 
 namespace Envoy {
 namespace RequestInfo {
 
 struct RequestInfoImpl : public RequestInfo {
-  RequestInfoImpl()
-      : start_time_(std::chrono::system_clock::now()),
-        start_time_monotonic_(std::chrono::steady_clock::now()) {}
+  explicit RequestInfoImpl(TimeSource& time_source)
+      : time_source_(time_source), start_time_(time_source.systemTime()),
+        start_time_monotonic_(time_source.monotonicTime()) {}
 
-  RequestInfoImpl(Http::Protocol protocol) : RequestInfoImpl() { protocol_ = protocol; }
+  RequestInfoImpl(Http::Protocol protocol, TimeSource& time_source) : RequestInfoImpl(time_source) {
+    protocol_ = protocol;
+  }
 
   SystemTime startTime() const override { return start_time_; }
 
@@ -36,7 +40,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onLastDownstreamRxByteReceived() override {
     ASSERT(!last_downstream_rx_byte_received);
-    last_downstream_rx_byte_received = std::chrono::steady_clock::now();
+    last_downstream_rx_byte_received = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> firstUpstreamTxByteSent() const override {
@@ -45,7 +49,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onFirstUpstreamTxByteSent() override {
     ASSERT(!first_upstream_tx_byte_sent_);
-    first_upstream_tx_byte_sent_ = std::chrono::steady_clock::now();
+    first_upstream_tx_byte_sent_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> lastUpstreamTxByteSent() const override {
@@ -54,7 +58,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onLastUpstreamTxByteSent() override {
     ASSERT(!last_upstream_tx_byte_sent_);
-    last_upstream_tx_byte_sent_ = std::chrono::steady_clock::now();
+    last_upstream_tx_byte_sent_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> firstUpstreamRxByteReceived() const override {
@@ -63,7 +67,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onFirstUpstreamRxByteReceived() override {
     ASSERT(!first_upstream_rx_byte_received_);
-    first_upstream_rx_byte_received_ = std::chrono::steady_clock::now();
+    first_upstream_rx_byte_received_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> lastUpstreamRxByteReceived() const override {
@@ -72,7 +76,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onLastUpstreamRxByteReceived() override {
     ASSERT(!last_upstream_rx_byte_received_);
-    last_upstream_rx_byte_received_ = std::chrono::steady_clock::now();
+    last_upstream_rx_byte_received_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> firstDownstreamTxByteSent() const override {
@@ -81,7 +85,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onFirstDownstreamTxByteSent() override {
     ASSERT(!first_downstream_tx_byte_sent_);
-    first_downstream_tx_byte_sent_ = std::chrono::steady_clock::now();
+    first_downstream_tx_byte_sent_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> lastDownstreamTxByteSent() const override {
@@ -90,7 +94,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onLastDownstreamTxByteSent() override {
     ASSERT(!last_downstream_tx_byte_sent_);
-    last_downstream_tx_byte_sent_ = std::chrono::steady_clock::now();
+    last_downstream_tx_byte_sent_ = time_source_.monotonicTime();
   }
 
   absl::optional<std::chrono::nanoseconds> requestComplete() const override {
@@ -99,7 +103,7 @@ struct RequestInfoImpl : public RequestInfo {
 
   void onRequestComplete() override {
     ASSERT(!final_time_);
-    final_time_ = std::chrono::steady_clock::now();
+    final_time_ = time_source_.monotonicTime();
   }
 
   void resetUpstreamTimings() override {
@@ -125,7 +129,13 @@ struct RequestInfoImpl : public RequestInfo {
 
   void setResponseFlag(ResponseFlag response_flag) override { response_flags_ |= response_flag; }
 
-  bool getResponseFlag(ResponseFlag flag) const override { return response_flags_ & flag; }
+  bool intersectResponseFlags(uint64_t response_flags) const override {
+    return (response_flags_ & response_flags) != 0;
+  }
+
+  bool hasResponseFlag(ResponseFlag flag) const override { return response_flags_ & flag; }
+
+  bool hasAnyResponseFlag() const override { return response_flags_ != 0; }
 
   void onUpstreamHostSelected(Upstream::HostDescriptionConstSharedPtr host) override {
     upstream_host_ = host;
@@ -172,6 +182,16 @@ struct RequestInfoImpl : public RequestInfo {
     (*metadata_.mutable_filter_metadata())[name].MergeFrom(value);
   };
 
+  FilterState& perRequestState() override { return per_request_state_; }
+  const FilterState& perRequestState() const override { return per_request_state_; }
+
+  void setRequestedServerName(absl::string_view requested_server_name) override {
+    requested_server_name_ = std::string(requested_server_name);
+  }
+
+  const std::string& requestedServerName() const override { return requested_server_name_; }
+
+  TimeSource& time_source_;
   const SystemTime start_time_;
   const MonotonicTime start_time_monotonic_;
 
@@ -191,6 +211,7 @@ struct RequestInfoImpl : public RequestInfo {
   bool hc_request_{};
   const Router::RouteEntry* route_entry_{};
   envoy::api::v2::core::Metadata metadata_{};
+  FilterStateImpl per_request_state_{};
 
 private:
   uint64_t bytes_received_{};
@@ -198,6 +219,7 @@ private:
   Network::Address::InstanceConstSharedPtr upstream_local_address_;
   Network::Address::InstanceConstSharedPtr downstream_local_address_;
   Network::Address::InstanceConstSharedPtr downstream_remote_address_;
+  std::string requested_server_name_;
 };
 
 } // namespace RequestInfo

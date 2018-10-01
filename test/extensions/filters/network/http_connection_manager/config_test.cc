@@ -6,6 +6,7 @@
 
 #include "extensions/filters/network/http_connection_manager/config.h"
 
+#include "test/mocks/http/mocks.h"
 #include "test/mocks/network/mocks.h"
 #include "test/mocks/server/mocks.h"
 #include "test/test_common/printers.h"
@@ -14,6 +15,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::ContainerEq;
 using testing::Return;
 
@@ -27,7 +29,17 @@ parseHttpConnectionManagerFromJson(const std::string& json_string) {
   envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager
       http_connection_manager;
   auto json_object_ptr = Json::Factory::loadFromString(json_string);
-  Config::FilterJson::translateHttpConnectionManager(*json_object_ptr, http_connection_manager);
+  NiceMock<Stats::MockStore> scope;
+  Config::FilterJson::translateHttpConnectionManager(*json_object_ptr, http_connection_manager,
+                                                     scope.statsOptions());
+  return http_connection_manager;
+}
+
+envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager
+parseHttpConnectionManagerFromV2Yaml(const std::string& yaml) {
+  envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager
+      http_connection_manager;
+  MessageUtil::loadFromYaml(yaml, http_connection_manager);
   return http_connection_manager;
 }
 
@@ -116,6 +128,44 @@ TEST_F(HttpConnectionManagerConfigTest, MiscConfig) {
               ContainerEq(config.tracingConfig()->request_headers_for_tags_));
   EXPECT_EQ(*context_.local_info_.address_, config.localAddress());
   EXPECT_EQ("foo", config.serverName());
+  EXPECT_EQ(5 * 60 * 1000, config.streamIdleTimeout().count());
+}
+
+TEST_F(HttpConnectionManagerConfigTest, UnixSocketInternalAddress) {
+  const std::string yaml_string = R"EOF(
+  stat_prefix: ingress_http
+  internal_address_config:
+    unix_sockets: true
+  route_config:
+    name: local_route
+  http_filters:
+  - name: envoy.router
+  )EOF";
+
+  HttpConnectionManagerConfig config(parseHttpConnectionManagerFromV2Yaml(yaml_string), context_,
+                                     date_provider_, route_config_provider_manager_);
+  Network::Address::PipeInstance unixAddress{"/foo"};
+  Network::Address::Ipv4Instance internalIpAddress{"127.0.0.1", 0};
+  Network::Address::Ipv4Instance externalIpAddress{"12.0.0.1", 0};
+  EXPECT_TRUE(config.internalAddressConfig().isInternalAddress(unixAddress));
+  EXPECT_TRUE(config.internalAddressConfig().isInternalAddress(internalIpAddress));
+  EXPECT_FALSE(config.internalAddressConfig().isInternalAddress(externalIpAddress));
+}
+
+// Validated that an explicit zero stream idle timeout disables.
+TEST_F(HttpConnectionManagerConfigTest, DisabledStreamIdleTimeout) {
+  const std::string yaml_string = R"EOF(
+  stat_prefix: ingress_http
+  stream_idle_timeout: 0s
+  route_config:
+    name: local_route
+  http_filters:
+  - name: envoy.router
+  )EOF";
+
+  HttpConnectionManagerConfig config(parseHttpConnectionManagerFromV2Yaml(yaml_string), context_,
+                                     date_provider_, route_config_provider_manager_);
+  EXPECT_EQ(0, config.streamIdleTimeout().count());
 }
 
 TEST_F(HttpConnectionManagerConfigTest, SingleDateProvider) {
@@ -356,6 +406,119 @@ TEST_F(HttpConnectionManagerConfigTest, BadAccessLogNestedTypes) {
   Json::ObjectSharedPtr json_config = Json::Factory::loadFromString(json_string);
   HttpConnectionManagerFilterConfigFactory factory;
   EXPECT_THROW(factory.createFilterFactory(*json_config, context_), Json::Exception);
+}
+
+class FilterChainTest : public HttpConnectionManagerConfigTest {
+public:
+  const std::string basic_config_ = R"EOF(
+  {
+    "codec_type": "http1",
+    "server_name": "foo",
+    "stat_prefix": "router",
+    "route_config":
+    {
+      "virtual_hosts": [
+        {
+          "name": "service",
+          "domains": [ "*" ],
+          "routes": [
+            {
+              "prefix": "/",
+              "cluster": "cluster"
+            }
+          ]
+        }
+      ]
+    },
+    "filters": [
+      { "name": "http_dynamo_filter", "config": {} },
+      { "name": "router", "config": {} }
+    ]
+  }
+  )EOF";
+};
+
+TEST_F(FilterChainTest, createFilterChain) {
+  HttpConnectionManagerConfig config(parseHttpConnectionManagerFromJson(basic_config_), context_,
+                                     date_provider_, route_config_provider_manager_);
+
+  Http::MockFilterChainFactoryCallbacks callbacks;
+  EXPECT_CALL(callbacks, addStreamFilter(_));        // Dynamo
+  EXPECT_CALL(callbacks, addStreamDecoderFilter(_)); // Router
+  config.createFilterChain(callbacks);
+}
+
+TEST_F(FilterChainTest, createUpgradeFilterChain) {
+  auto hcm_config = parseHttpConnectionManagerFromJson(basic_config_);
+  hcm_config.add_upgrade_configs()->set_upgrade_type("websocket");
+
+  HttpConnectionManagerConfig config(hcm_config, context_, date_provider_,
+                                     route_config_provider_manager_);
+
+  Http::MockFilterChainFactoryCallbacks callbacks;
+  {
+    EXPECT_CALL(callbacks, addStreamFilter(_));        // Dynamo
+    EXPECT_CALL(callbacks, addStreamDecoderFilter(_)); // Router
+    EXPECT_TRUE(config.createUpgradeFilterChain("WEBSOCKET", callbacks));
+  }
+
+  {
+    EXPECT_CALL(callbacks, addStreamFilter(_)).Times(0);
+    EXPECT_CALL(callbacks, addStreamDecoderFilter(_)).Times(0);
+    EXPECT_FALSE(config.createUpgradeFilterChain("foo", callbacks));
+  }
+}
+
+TEST_F(FilterChainTest, createCustomUpgradeFilterChain) {
+  auto hcm_config = parseHttpConnectionManagerFromJson(basic_config_);
+  auto websocket_config = hcm_config.add_upgrade_configs();
+  websocket_config->set_upgrade_type("websocket");
+
+  ASSERT_TRUE(websocket_config->add_filters()->ParseFromString("\n\fenvoy.router"));
+
+  auto foo_config = hcm_config.add_upgrade_configs();
+  foo_config->set_upgrade_type("foo");
+  foo_config->add_filters()->ParseFromString("\n\fenvoy.router");
+  foo_config->add_filters()->ParseFromString("\n"
+                                             "\x18"
+                                             "envoy.http_dynamo_filter");
+  foo_config->add_filters()->ParseFromString("\n"
+                                             "\x18"
+                                             "envoy.http_dynamo_filter");
+
+  HttpConnectionManagerConfig config(hcm_config, context_, date_provider_,
+                                     route_config_provider_manager_);
+
+  {
+    Http::MockFilterChainFactoryCallbacks callbacks;
+    EXPECT_CALL(callbacks, addStreamFilter(_));        // Dynamo
+    EXPECT_CALL(callbacks, addStreamDecoderFilter(_)); // Router
+    config.createFilterChain(callbacks);
+  }
+
+  {
+    Http::MockFilterChainFactoryCallbacks callbacks;
+    EXPECT_CALL(callbacks, addStreamDecoderFilter(_)); // Router
+    EXPECT_TRUE(config.createUpgradeFilterChain("websocket", callbacks));
+  }
+
+  {
+    Http::MockFilterChainFactoryCallbacks callbacks;
+    EXPECT_CALL(callbacks, addStreamDecoderFilter(_));   // Router
+    EXPECT_CALL(callbacks, addStreamFilter(_)).Times(2); // Dynamo
+    EXPECT_TRUE(config.createUpgradeFilterChain("Foo", callbacks));
+  }
+}
+
+TEST_F(FilterChainTest, invalidConfig) {
+  auto hcm_config = parseHttpConnectionManagerFromJson(basic_config_);
+  hcm_config.add_upgrade_configs()->set_upgrade_type("WEBSOCKET");
+  hcm_config.add_upgrade_configs()->set_upgrade_type("websocket");
+
+  EXPECT_THROW_WITH_MESSAGE(HttpConnectionManagerConfig(hcm_config, context_, date_provider_,
+                                                        route_config_provider_manager_),
+                            EnvoyException,
+                            "Error: multiple upgrade configs with the same name: 'websocket'");
 }
 
 } // namespace HttpConnectionManager

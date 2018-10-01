@@ -38,9 +38,14 @@ public:
    * returned.
    */
   virtual absl::optional<ConfigInfo> configInfo() const PURE;
+
+  /**
+   * @return the last time this RouteConfigProvider was updated. Used for config dumps.
+   */
+  virtual SystemTime lastUpdated() const PURE;
 };
 
-typedef std::shared_ptr<RouteConfigProvider> RouteConfigProviderSharedPtr;
+typedef std::unique_ptr<RouteConfigProvider> RouteConfigProviderPtr;
 
 } // namespace Router
 } // namespace Envoy

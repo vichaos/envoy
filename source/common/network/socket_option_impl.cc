@@ -10,11 +10,13 @@ namespace Envoy {
 namespace Network {
 
 // Socket::Option
-bool SocketOptionImpl::setOption(Socket& socket, Socket::SocketState state) const {
+bool SocketOptionImpl::setOption(Socket& socket,
+                                 envoy::api::v2::core::SocketOption::SocketState state) const {
   if (in_state_ == state) {
-    const int error = SocketOptionImpl::setSocketOption(socket, optname_, value_);
-    if (error != 0) {
-      ENVOY_LOG(warn, "Setting option on socket failed: {}", strerror(errno));
+    const Api::SysCallIntResult result =
+        SocketOptionImpl::setSocketOption(socket, optname_, value_);
+    if (result.rc_ != 0) {
+      ENVOY_LOG(warn, "Setting option on socket failed: {}", strerror(result.errno_));
       return false;
     }
   }
@@ -23,16 +25,16 @@ bool SocketOptionImpl::setOption(Socket& socket, Socket::SocketState state) cons
 
 bool SocketOptionImpl::isSupported() const { return optname_.has_value(); }
 
-int SocketOptionImpl::setSocketOption(Socket& socket, Network::SocketOptionName optname,
-                                      int value) {
+Api::SysCallIntResult SocketOptionImpl::setSocketOption(Socket& socket,
+                                                        Network::SocketOptionName optname,
+                                                        const absl::string_view value) {
 
   if (!optname.has_value()) {
-    errno = ENOTSUP;
-    return -1;
+    return {-1, ENOTSUP};
   }
   auto& os_syscalls = Api::OsSysCallsSingleton::get();
-  return os_syscalls.setsockopt(socket.fd(), optname.value().first, optname.value().second, &value,
-                                sizeof(value));
+  return os_syscalls.setsockopt(socket.fd(), optname.value().first, optname.value().second,
+                                value.data(), value.size());
 }
 
 } // namespace Network

@@ -1,6 +1,7 @@
 #include "common/config/filter_json.h"
 
 #include "envoy/config/accesslog/v2/file.pb.h"
+#include "envoy/stats/stats_options.h"
 
 #include "common/common/assert.h"
 #include "common/common/utility.h"
@@ -116,7 +117,7 @@ void FilterJson::translateAccessLog(const Json::Object& json_config,
 
   // Statically registered access logs are a v2-only feature, so use the standard internal file
   // access log for json config conversion.
-  proto_config.set_name(Extensions::AccessLoggers::AccessLogNames::get().FILE);
+  proto_config.set_name(Extensions::AccessLoggers::AccessLogNames::get().File);
 
   if (json_config.hasObject("filter")) {
     translateAccessLogFilter(*json_config.getObject("filter"), *proto_config.mutable_filter());
@@ -126,7 +127,8 @@ void FilterJson::translateAccessLog(const Json::Object& json_config,
 void FilterJson::translateHttpConnectionManager(
     const Json::Object& json_config,
     envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager&
-        proto_config) {
+        proto_config,
+    const Stats::StatsOptions& stats_options) {
   json_config.validateSchema(Json::Schema::HTTP_CONN_NETWORK_FILTER_SCHEMA);
 
   envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager::CodecType
@@ -138,7 +140,8 @@ void FilterJson::translateHttpConnectionManager(
   JSON_UTIL_SET_STRING(json_config, proto_config, stat_prefix);
 
   if (json_config.hasObject("rds")) {
-    Utility::translateRdsConfig(*json_config.getObject("rds"), *proto_config.mutable_rds());
+    Utility::translateRdsConfig(*json_config.getObject("rds"), *proto_config.mutable_rds(),
+                                stats_options);
   }
   if (json_config.hasObject("route_config")) {
     if (json_config.hasObject("rds")) {
@@ -146,7 +149,7 @@ void FilterJson::translateHttpConnectionManager(
           "http connection manager must have either rds or route_config but not both");
     }
     RdsJson::translateRouteConfiguration(*json_config.getObject("route_config"),
-                                         *proto_config.mutable_route_config());
+                                         *proto_config.mutable_route_config(), stats_options);
   }
 
   for (const auto& json_filter : json_config.getObjectArray("filters", true)) {
@@ -158,8 +161,9 @@ void FilterJson::translateHttpConnectionManager(
         json_filter->getString("name")));
     JSON_UTIL_SET_STRING(*json_filter, *filter->mutable_deprecated_v1(), type);
 
-    const std::string deprecated_config = "{\"deprecated_v1\": true, \"value\": " +
-                                          json_filter->getObject("config")->asJsonString() + "}";
+    const std::string deprecated_config =
+        "{\"deprecated_v1\": true, \"value\": " + json_filter->getObject("config")->asJsonString() +
+        "}";
 
     const auto status =
         Protobuf::util::JsonStringToMessage(deprecated_config, filter->mutable_config());
@@ -220,7 +224,7 @@ void FilterJson::translateHttpConnectionManager(
       proto_config.mutable_set_current_client_cert_details()->mutable_subject()->set_value(true);
     } else {
       ASSERT(detail == "SAN");
-      proto_config.mutable_set_current_client_cert_details()->mutable_san()->set_value(true);
+      proto_config.mutable_set_current_client_cert_details()->set_uri(true);
     }
   }
 }
@@ -300,7 +304,10 @@ void FilterJson::translateHealthCheckFilter(
 
   JSON_UTIL_SET_BOOL(json_config, proto_config, pass_through_mode);
   JSON_UTIL_SET_DURATION(json_config, proto_config, cache_time);
-  JSON_UTIL_SET_STRING(json_config, proto_config, endpoint);
+  std::string endpoint = json_config.getString("endpoint");
+  auto& header = *proto_config.add_headers();
+  header.set_name(":path");
+  header.set_exact_match(endpoint);
 }
 
 void FilterJson::translateGrpcJsonTranscoder(

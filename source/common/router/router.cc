@@ -9,7 +9,6 @@
 #include "envoy/grpc/status.h"
 #include "envoy/http/conn_pool.h"
 #include "envoy/runtime/runtime.h"
-#include "envoy/stats/stats.h"
 #include "envoy/upstream/cluster_manager.h"
 #include "envoy/upstream/upstream.h"
 
@@ -223,14 +222,14 @@ Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool e
     direct_response->rewritePathHeader(headers, !config_.suppress_envoy_headers_);
     callbacks_->sendLocalReply(
         direct_response->responseCode(), direct_response->responseBody(),
-        [ this, direct_response, &request_headers = headers ](Http::HeaderMap & response_headers)
-            ->void {
-              const auto new_path = direct_response->newPath(request_headers);
-              if (!new_path.empty()) {
-                response_headers.addReferenceKey(Http::Headers::get().Location, new_path);
-              }
-              direct_response->finalizeResponseHeaders(response_headers, callbacks_->requestInfo());
-            });
+        [this, direct_response,
+         &request_headers = headers](Http::HeaderMap& response_headers) -> void {
+          const auto new_path = direct_response->newPath(request_headers);
+          if (!new_path.empty()) {
+            response_headers.addReferenceKey(Http::Headers::get().Location, new_path);
+          }
+          direct_response->finalizeResponseHeaders(response_headers, callbacks_->requestInfo());
+        });
     return Http::FilterHeadersStatus::StopIteration;
   }
 
@@ -410,7 +409,8 @@ void Filter::maybeDoShadowing() {
 
 void Filter::onRequestComplete() {
   downstream_end_stream_ = true;
-  downstream_request_complete_time_ = std::chrono::steady_clock::now();
+  Event::Dispatcher& dispatcher = callbacks_->dispatcher();
+  downstream_request_complete_time_ = dispatcher.timeSystem().monotonicTime();
 
   // Possible that we got an immediate reset.
   if (upstream_request_) {
@@ -420,8 +420,7 @@ void Filter::onRequestComplete() {
 
     upstream_request_->setupPerTryTimeout();
     if (timeout_.global_timeout_.count() > 0) {
-      response_timeout_ =
-          callbacks_->dispatcher().createTimer([this]() -> void { onResponseTimeout(); });
+      response_timeout_ = dispatcher.createTimer([this]() -> void { onResponseTimeout(); });
       response_timeout_->enableTimer(timeout_.global_timeout_);
     }
   }
@@ -470,6 +469,9 @@ void Filter::onUpstreamReset(UpstreamResetType type,
 
   // We don't retry on a global timeout or if we already started the response.
   if (type != UpstreamResetType::GlobalTimeout && !downstream_response_started_ && retry_state_) {
+    // Notify retry modifiers about the attempted host.
+    retry_state_->onHostAttempted(upstream_host);
+
     RetryStatus retry_status =
         retry_state_->shouldRetry(nullptr, reset_reason, [this]() -> void { doRetry(); });
     if (retry_status == RetryStatus::Yes && setupRetry(true)) {
@@ -590,6 +592,9 @@ void Filter::onUpstreamHeaders(const uint64_t response_code, Http::HeaderMapPtr&
   }
 
   if (retry_state_) {
+    // Notify retry modifiers about the attempted host.
+    retry_state_->onHostAttempted(upstream_request_->upstream_host_);
+
     RetryStatus retry_status = retry_state_->shouldRetry(
         headers.get(), absl::optional<Http::StreamResetReason>(), [this]() -> void { doRetry(); });
     // Capture upstream_host since setupRetry() in the following line will clear
@@ -612,7 +617,8 @@ void Filter::onUpstreamHeaders(const uint64_t response_code, Http::HeaderMapPtr&
   // Only send upstream service time if we received the complete request and this is not a
   // premature response.
   if (DateUtil::timePointValid(downstream_request_complete_time_)) {
-    MonotonicTime response_received_time = std::chrono::steady_clock::now();
+    Event::Dispatcher& dispatcher = callbacks_->dispatcher();
+    MonotonicTime response_received_time = dispatcher.timeSystem().monotonicTime();
     std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         response_received_time - downstream_request_complete_time_);
     if (!config_.suppress_envoy_headers_) {
@@ -679,8 +685,9 @@ void Filter::onUpstreamComplete() {
 
   if (config_.emit_dynamic_stats_ && !callbacks_->requestInfo().healthCheck() &&
       DateUtil::timePointValid(downstream_request_complete_time_)) {
+    Event::Dispatcher& dispatcher = callbacks_->dispatcher();
     std::chrono::milliseconds response_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - downstream_request_complete_time_);
+        dispatcher.timeSystem().monotonicTime() - downstream_request_complete_time_);
 
     upstream_request_->upstream_host_->outlierDetector().putResponseTime(response_time);
 
@@ -745,6 +752,7 @@ bool Filter::setupRetry(bool end_stream) {
 }
 
 void Filter::doRetry() {
+  is_retry_ = true;
   Http::ConnectionPool::Instance* conn_pool = getConnPool();
   if (!conn_pool) {
     sendNoHealthyUpstreamResponse();
@@ -774,13 +782,14 @@ void Filter::doRetry() {
 
 Filter::UpstreamRequest::UpstreamRequest(Filter& parent, Http::ConnectionPool::Instance& pool)
     : parent_(parent), conn_pool_(pool), grpc_rq_success_deferred_(false),
-      request_info_(pool.protocol()), calling_encode_headers_(false), upstream_canary_(false),
-      encode_complete_(false), encode_trailers_(false) {
+      request_info_(pool.protocol(), parent_.callbacks_->dispatcher().timeSystem()),
+      calling_encode_headers_(false), upstream_canary_(false), encode_complete_(false),
+      encode_trailers_(false) {
 
   if (parent_.config_.start_child_span_) {
     span_ = parent_.callbacks_->activeSpan().spawnChild(
         parent_.callbacks_->tracingConfig(), "router " + parent.cluster_->name() + " egress",
-        ProdSystemTimeSource::instance_.currentTime());
+        parent.timeSource().systemTime());
     span_->setTag(Tracing::Tags::get().COMPONENT, Tracing::Tags::get().PROXY);
   }
 

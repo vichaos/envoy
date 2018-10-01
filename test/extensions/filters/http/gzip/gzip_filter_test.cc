@@ -68,7 +68,7 @@ protected:
 
   void verifyCompressedData() {
     decompressor_.decompress(data_, decompressed_data_);
-    const std::string uncompressed_str{TestUtility::bufferToString(decompressed_data_)};
+    const std::string uncompressed_str{decompressed_data_.toString()};
     ASSERT_EQ(expected_str_.length(), uncompressed_str.length());
     EXPECT_EQ(expected_str_, uncompressed_str);
     EXPECT_EQ(expected_str_.length(), stats_.counter("test.gzip.total_uncompressed_bytes").value());
@@ -77,7 +77,7 @@ protected:
 
   void feedBuffer(uint64_t size) {
     TestUtility::feedBufferWithRandomCharacters(data_, size);
-    expected_str_ += TestUtility::bufferToString(data_);
+    expected_str_ += data_.toString();
   }
 
   void drainBuffer() {
@@ -175,14 +175,14 @@ TEST_F(GzipFilterTest, hasCacheControlNoTransform) {
   }
 }
 
-// Verifies that compression is skipped when cache-control header has no-tranform value.
+// Verifies that compression is skipped when cache-control header has no-transform value.
 TEST_F(GzipFilterTest, hasCacheControlNoTransformNoCompression) {
   doRequest({{":method", "get"}, {"accept-encoding", "gzip;q=0, deflate"}}, true);
   doResponseNoCompression(
       {{":method", "get"}, {"content-length", "256"}, {"cache-control", "no-transform"}});
 }
 
-// Verifies that compression is NOT skipped when cache-control header does NOT have no-tranform
+// Verifies that compression is NOT skipped when cache-control header does NOT have no-transform
 // value.
 TEST_F(GzipFilterTest, hasCacheControlNoTransformCompression) {
   doRequest({{":method", "get"}, {"accept-encoding", "gzip, deflate"}}, true);

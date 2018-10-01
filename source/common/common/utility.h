@@ -50,19 +50,24 @@ public:
 private:
   std::string parse(const std::string& format_string);
 
-  typedef std::vector<int32_t> SubsecondOffsets;
-  std::string fromTimeAndPrepareSubsecondOffsets(time_t time,
-                                                 SubsecondOffsets& subsecond_offsets) const;
+  typedef std::vector<int32_t> SpecifierOffsets;
+  std::string fromTimeAndPrepareSpecifierOffsets(time_t time, SpecifierOffsets& specifier_offsets,
+                                                 const std::string& seconds_str) const;
 
-  // A container to hold a subsecond specifier (%f, %Nf) found in a format string.
-  struct SubsecondSpecifier {
-    SubsecondSpecifier(const size_t position, const size_t width, const std::string& segment)
-        : position_(position), width_(width), segment_(segment) {}
+  // A container to hold a specifiers (%f, %Nf, %s) found in a format string.
+  struct Specifier {
+    // To build a subsecond-specifier.
+    Specifier(const size_t position, const size_t width, const std::string& segment)
+        : position_(position), width_(width), segment_(segment), second_(false) {}
 
-    // The position/index of a subsecond specifier in a format string.
+    // To build a second-specifier (%s), the number of characters to be replaced is always 2.
+    Specifier(const size_t position, const std::string& segment)
+        : position_(position), width_(2), segment_(segment), second_(true) {}
+
+    // The position/index of a specifier in a format string.
     const size_t position_;
 
-    // The width of a subsecond specifier, e.g. given %3f, the width is 3. If %f is set as the
+    // The width of a specifier, e.g. given %3f, the width is 3. If %f is set as the
     // specifier, the width value should be 9 (the number of nanosecond digits).
     const size_t width_;
 
@@ -70,10 +75,14 @@ private:
     // segment may include strftime accepted specifiers. E.g. given "%3f-this-i%s-a-segment-%4f",
     // the current specifier is "%4f" and the segment is "-this-i%s-a-segment-".
     const std::string segment_;
+
+    // As an indication that this specifier is a %s (expect to be replaced by seconds since the
+    // epoch).
+    const bool second_;
   };
 
-  // This holds all subsecond specifiers found in a given format string.
-  std::vector<SubsecondSpecifier> subseconds_;
+  // This holds all specifiers found in a given format string.
+  std::vector<Specifier> specifiers_;
 
   const std::string format_string_;
 };
@@ -87,25 +96,13 @@ public:
 };
 
 /**
- * Production implementation of SystemTimeSource that returns the current time.
+ * Real-world time implementation of TimeSource.
  */
-class ProdSystemTimeSource : public SystemTimeSource {
+class RealTimeSource : public TimeSource {
 public:
-  // SystemTimeSource
-  SystemTime currentTime() override { return std::chrono::system_clock::now(); }
-
-  static ProdSystemTimeSource instance_;
-};
-
-/**
- * Production implementation of MonotonicTimeSource that returns the current time.
- */
-class ProdMonotonicTimeSource : public MonotonicTimeSource {
-public:
-  // MonotonicTimeSource
-  MonotonicTime currentTime() override { return std::chrono::steady_clock::now(); }
-
-  static ProdMonotonicTimeSource instance_;
+  // TimeSource
+  SystemTime systemTime() override { return std::chrono::system_clock::now(); }
+  MonotonicTime monotonicTime() override { return std::chrono::steady_clock::now(); }
 };
 
 /**
@@ -276,7 +273,7 @@ public:
 
   /**
    * Crop characters from a string view starting at the first character of the matched
-   * delimiter string view until the begining of the source string view.
+   * delimiter string view until the beginning of the source string view.
    * @param source supplies the string view to be processed.
    * @param delimiter supplies the string view that delimits the starting point for deletion.
    * @return sub-string of the string view if any.
@@ -390,7 +387,7 @@ public:
 };
 
 /**
- * Utilities for finding primes
+ * Utilities for finding primes.
  */
 class Primes {
 public:
@@ -414,11 +411,56 @@ public:
    * Constructs a std::regex, converting any std::regex_error exception into an EnvoyException.
    * @param regex std::string containing the regular expression to parse.
    * @param flags std::regex::flag_type containing parser flags. Defaults to std::regex::optimize.
-   * @return std::regex constructed from regex and flags
+   * @return std::regex constructed from regex and flags.
    * @throw EnvoyException if the regex string is invalid.
    */
   static std::regex parseRegex(const std::string& regex,
                                std::regex::flag_type flags = std::regex::optimize);
+};
+
+/**
+ * Utilities for working with weighted clusters.
+ */
+class WeightedClusterUtil {
+public:
+  /*
+   * Returns a WeightedClusterEntry from the given weighted clusters based on
+   * the total cluster weight and a random value.
+   * @param weighted_clusters a vector of WeightedClusterEntry instances.
+   * @param total_cluster_weight the total weight of all clusters.
+   * @param random_value the random value.
+   * @param ignore_overflow whether to ignore cluster weight overflows.
+   * @return a WeightedClusterEntry.
+   */
+  template <typename WeightedClusterEntry>
+  static const WeightedClusterEntry&
+  pickCluster(const std::vector<WeightedClusterEntry>& weighted_clusters,
+              const uint64_t total_cluster_weight, const uint64_t random_value,
+              const bool ignore_overflow) {
+    uint64_t selected_value = random_value % total_cluster_weight;
+    uint64_t begin = 0;
+    uint64_t end = 0;
+
+    // Find the right cluster to route to based on the interval in which
+    // the selected value falls. The intervals are determined as
+    // [0, cluster1_weight), [cluster1_weight, cluster1_weight+cluster2_weight),..
+    for (const WeightedClusterEntry& cluster : weighted_clusters) {
+      end = begin + cluster->clusterWeight();
+      if (!ignore_overflow) {
+        // end > total_cluster_weight: This case can only occur with Runtimes,
+        // when the user specifies invalid weights such that
+        // sum(weights) > total_cluster_weight.
+        ASSERT(end <= total_cluster_weight);
+      }
+
+      if (selected_value >= begin && selected_value < end) {
+        return cluster;
+      }
+      begin = end;
+    }
+
+    NOT_REACHED_GCOVR_EXCL_LINE;
+  }
 };
 
 /**

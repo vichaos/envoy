@@ -19,13 +19,13 @@ namespace Envoy {
 namespace Http {
 
 Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequestHeaders(
-    Http::HeaderMap& request_headers, Protocol protocol, Network::Connection& connection,
+    Http::HeaderMap& request_headers, Network::Connection& connection,
     ConnectionManagerConfig& config, const Router::Config& route_config,
     Runtime::RandomGenerator& random, Runtime::Loader& runtime,
     const LocalInfo::LocalInfo& local_info) {
-  // If this is a WebSocket Upgrade request, do not remove the Connection and Upgrade headers,
+  // If this is a Upgrade request, do not remove the Connection and Upgrade headers,
   // as we forward them verbatim to the upstream hosts.
-  if (protocol == Protocol::Http11 && Utility::isWebSocketUpgradeRequest(request_headers)) {
+  if (Utility::isUpgrade(request_headers)) {
     // The current WebSocket implementation re-uses the HTTP1 codec to send upgrade headers to
     // the upstream host. This adds the "transfer-encoding: chunked" request header if the stream
     // has not ended and content-length does not exist. In HTTP1.1, if transfer-encoding and
@@ -102,8 +102,9 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
   // HUGE WARNING: The way we do this is not optimal but is how it worked "from the beginning" so
   //               we can't change it at this point. In the future we will likely need to add
   //               additional inference modes and make this mode legacy.
-  const bool internal_request = single_xff_address && final_remote_address != nullptr &&
-                                Network::Utility::isInternalAddress(*final_remote_address);
+  const bool internal_request =
+      single_xff_address && final_remote_address != nullptr &&
+      config.internalAddressConfig().isInternalAddress(*final_remote_address);
 
   // After determining internal request status, if there is no final remote address, due to no XFF,
   // busted XFF, etc., use the direct connection remote address for logging.
@@ -176,12 +177,47 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
     request_headers.insertRequestId().value(uuid);
   }
 
-  if (config.tracingConfig()) {
-    Tracing::HttpTracerUtility::mutateHeaders(request_headers, runtime);
-  }
+  mutateTracingRequestHeader(request_headers, runtime, config);
   mutateXfccRequestHeader(request_headers, connection, config);
 
   return final_remote_address;
+}
+
+void ConnectionManagerUtility::mutateTracingRequestHeader(Http::HeaderMap& request_headers,
+                                                          Runtime::Loader& runtime,
+                                                          ConnectionManagerConfig& config) {
+  if (!config.tracingConfig() || !request_headers.RequestId()) {
+    return;
+  }
+
+  std::string x_request_id = request_headers.RequestId()->value().c_str();
+  uint64_t result;
+  // Skip if x-request-id is corrupted.
+  if (!UuidUtils::uuidModBy(x_request_id, result, 10000)) {
+    return;
+  }
+
+  // Do not apply tracing transformations if we are currently tracing.
+  if (UuidTraceStatus::NoTrace == UuidUtils::isTraceableUuid(x_request_id)) {
+    if (request_headers.ClientTraceId() &&
+        runtime.snapshot().featureEnabled("tracing.client_enabled",
+                                          config.tracingConfig()->client_sampling_)) {
+      UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Client);
+    } else if (request_headers.EnvoyForceTrace()) {
+      UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Forced);
+    } else if (runtime.snapshot().featureEnabled("tracing.random_sampling",
+                                                 config.tracingConfig()->random_sampling_, result,
+                                                 10000)) {
+      UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Sampled);
+    }
+  }
+
+  if (!runtime.snapshot().featureEnabled("tracing.global_enabled",
+                                         config.tracingConfig()->overall_sampling_, result)) {
+    UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::NoTrace);
+  }
+
+  request_headers.RequestId()->value(x_request_id);
 }
 
 void ConnectionManagerUtility::mutateXfccRequestHeader(Http::HeaderMap& request_headers,
@@ -203,7 +239,7 @@ void ConnectionManagerUtility::mutateXfccRequestHeader(Http::HeaderMap& request_
     return;
   }
 
-  // TODO(myidpt): Handle the special characters in By and SAN fields.
+  // TODO(myidpt): Handle the special characters in By and URI fields.
   // TODO: Optimize client_cert_details based on perf analysis (direct string appending may be more
   // preferable).
   std::vector<std::string> client_cert_details;
@@ -233,12 +269,8 @@ void ConnectionManagerUtility::mutateXfccRequestHeader(Http::HeaderMap& request_
         client_cert_details.push_back("Subject=\"" + connection.ssl()->subjectPeerCertificate() +
                                       "\"");
         break;
-      case Http::ClientCertDetailsType::SAN:
-        // Currently, we only support a single SAN field with URI type.
-        // The "SAN" key still exists even if the SAN is empty.
-        client_cert_details.push_back("SAN=" + connection.ssl()->uriSanPeerCertificate());
-        break;
       case Http::ClientCertDetailsType::URI:
+        // The "URI" key still exists even if the URI is empty.
         client_cert_details.push_back("URI=" + connection.ssl()->uriSanPeerCertificate());
         break;
       case Http::ClientCertDetailsType::DNS: {
@@ -261,19 +293,36 @@ void ConnectionManagerUtility::mutateXfccRequestHeader(Http::HeaderMap& request_
   } else if (config.forwardClientCert() == Http::ForwardClientCertType::SanitizeSet) {
     request_headers.insertForwardedClientCert().value(client_cert_details_str);
   } else {
-    NOT_REACHED;
+    NOT_REACHED_GCOVR_EXCL_LINE;
   }
 }
 
 void ConnectionManagerUtility::mutateResponseHeaders(Http::HeaderMap& response_headers,
-                                                     const Http::HeaderMap& request_headers,
+                                                     const Http::HeaderMap* request_headers,
                                                      const std::string& via) {
-  response_headers.removeConnection();
+  if (request_headers != nullptr && Utility::isUpgrade(*request_headers) &&
+      Utility::isUpgrade(response_headers)) {
+    // As in mutateRequestHeaders, Upgrade responses have special handling.
+    //
+    // Unlike mutateRequestHeaders there is no explicit protocol check. If Envoy is proxying an
+    // upgrade response it has already passed the protocol checks.
+    const bool no_body =
+        (!response_headers.TransferEncoding() && !response_headers.ContentLength());
+    if (no_body) {
+      response_headers.insertContentLength().value(uint64_t(0));
+    }
+  } else {
+    response_headers.removeConnection();
+  }
   response_headers.removeTransferEncoding();
 
-  if (request_headers.EnvoyForceTrace() && request_headers.RequestId()) {
-    response_headers.insertRequestId().value(*request_headers.RequestId());
+  if (request_headers != nullptr && request_headers->EnvoyForceTrace() &&
+      request_headers->RequestId()) {
+    response_headers.insertRequestId().value(*request_headers->RequestId());
   }
+
+  response_headers.removeKeepAlive();
+  response_headers.removeProxyConnection();
 
   if (!via.empty()) {
     Utility::appendVia(response_headers, via);

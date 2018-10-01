@@ -17,11 +17,11 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::InSequence;
 using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
-using testing::_;
 
 namespace Envoy {
 namespace Extensions {
@@ -118,7 +118,7 @@ TEST_F(TcpStatsdSinkTest, BufferReallocate) {
         for (int i = 0; i < 2000; i++) {
           compare += "envoy.test_counter:1|c\n";
         }
-        EXPECT_EQ(compare, TestUtility::bufferToString(buffer));
+        EXPECT_EQ(compare, buffer.toString());
       }));
   sink_->flush(source_);
 }

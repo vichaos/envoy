@@ -47,8 +47,8 @@ WsHandlerImpl::WsHandlerImpl(HeaderMap& request_headers, RequestInfo::RequestInf
                              WebSocketProxyCallbacks& callbacks,
                              Upstream::ClusterManager& cluster_manager,
                              Network::ReadFilterCallbacks* read_callbacks,
-                             TcpProxy::ConfigSharedPtr config)
-    : TcpProxy::Filter(config, cluster_manager), request_headers_(request_headers),
+                             TcpProxy::ConfigSharedPtr config, Event::TimeSystem& time_system)
+    : TcpProxy::Filter(config, cluster_manager, time_system), request_headers_(request_headers),
       request_info_(request_info), route_entry_(route_entry), ws_callbacks_(callbacks) {
 
   // set_connection_stats == false because the http connection manager has already set them
@@ -131,7 +131,8 @@ void WsHandlerImpl::onConnectionSuccess() {
   // the connection pool. The current approach is a stop gap solution, where
   // we put the onus on the user to tell us if a route (and corresponding upstream)
   // is supposed to allow websocket upgrades or not.
-  Http1::ClientConnectionImpl upstream_http(*upstream_connection_, http_conn_callbacks_);
+  Http1::ClientConnectionImpl upstream_http(upstream_conn_data_->connection(),
+                                            http_conn_callbacks_);
   Http1::RequestStreamEncoderImpl upstream_request = Http1::RequestStreamEncoderImpl(upstream_http);
   upstream_request.encodeHeaders(request_headers_, false);
   ASSERT(state_ == ConnectState::PreConnect);

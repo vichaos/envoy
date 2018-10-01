@@ -2,12 +2,14 @@
 #include <functional>
 
 #include "envoy/http/protocol.h"
+#include "envoy/request_info/filter_state.h"
 #include "envoy/upstream/host_description.h"
 
 #include "common/common/fmt.h"
 #include "common/protobuf/utility.h"
 #include "common/request_info/request_info_impl.h"
 
+#include "test/common/request_info/test_int_accessor.h"
 #include "test/mocks/router/mocks.h"
 #include "test/mocks/upstream/mocks.h"
 
@@ -25,10 +27,15 @@ std::chrono::nanoseconds checkDuration(std::chrono::nanoseconds last,
   return timing.value();
 }
 
-TEST(RequestInfoImplTest, TimingTest) {
-  MonotonicTime pre_start = std::chrono::steady_clock::now();
-  RequestInfoImpl info(Http::Protocol::Http2);
-  MonotonicTime post_start = std::chrono::steady_clock::now();
+class RequestInfoImplTest : public testing::Test {
+protected:
+  DangerousDeprecatedTestTime test_time_;
+};
+
+TEST_F(RequestInfoImplTest, TimingTest) {
+  MonotonicTime pre_start = test_time_.timeSystem().monotonicTime();
+  RequestInfoImpl info(Http::Protocol::Http2, test_time_.timeSystem());
+  MonotonicTime post_start = test_time_.timeSystem().monotonicTime();
 
   const MonotonicTime& start = info.startTimeMonotonic();
 
@@ -69,8 +76,9 @@ TEST(RequestInfoImplTest, TimingTest) {
   dur = checkDuration(dur, info.requestComplete());
 }
 
-TEST(RequestInfoImplTest, BytesTest) {
-  RequestInfoImpl request_info(Http::Protocol::Http2);
+TEST_F(RequestInfoImplTest, BytesTest) {
+  RequestInfoImpl request_info(Http::Protocol::Http2, test_time_.timeSystem());
+
   const uint64_t bytes_sent = 7;
   const uint64_t bytes_received = 12;
 
@@ -81,7 +89,7 @@ TEST(RequestInfoImplTest, BytesTest) {
   EXPECT_EQ(bytes_received, request_info.bytesReceived());
 }
 
-TEST(RequestInfoImplTest, ResponseFlagTest) {
+TEST_F(RequestInfoImplTest, ResponseFlagTest) {
   const std::vector<ResponseFlag> responseFlags = {FailedLocalHealthCheck,
                                                    NoHealthyUpstream,
                                                    UpstreamRequestTimeout,
@@ -95,20 +103,30 @@ TEST(RequestInfoImplTest, ResponseFlagTest) {
                                                    FaultInjected,
                                                    RateLimited};
 
-  RequestInfoImpl request_info(Http::Protocol::Http2);
+  RequestInfoImpl request_info(Http::Protocol::Http2, test_time_.timeSystem());
+
+  EXPECT_FALSE(request_info.hasAnyResponseFlag());
+  EXPECT_FALSE(request_info.intersectResponseFlags(0));
   for (ResponseFlag flag : responseFlags) {
     // Test cumulative setting of response flags.
-    EXPECT_FALSE(request_info.getResponseFlag(flag))
+    EXPECT_FALSE(request_info.hasResponseFlag(flag))
         << fmt::format("Flag: {} was already set", flag);
     request_info.setResponseFlag(flag);
-    EXPECT_TRUE(request_info.getResponseFlag(flag))
+    EXPECT_TRUE(request_info.hasResponseFlag(flag))
         << fmt::format("Flag: {} was expected to be set", flag);
   }
+  EXPECT_TRUE(request_info.hasAnyResponseFlag());
+
+  RequestInfoImpl request_info2(Http::Protocol::Http2, test_time_.timeSystem());
+  request_info2.setResponseFlag(FailedLocalHealthCheck);
+
+  EXPECT_TRUE(request_info2.intersectResponseFlags(FailedLocalHealthCheck));
 }
 
-TEST(RequestInfoImplTest, MiscSettersAndGetters) {
+TEST_F(RequestInfoImplTest, MiscSettersAndGetters) {
   {
-    RequestInfoImpl request_info(Http::Protocol::Http2);
+    RequestInfoImpl request_info(Http::Protocol::Http2, test_time_.timeSystem());
+
     EXPECT_EQ(Http::Protocol::Http2, request_info.protocol().value());
 
     request_info.protocol(Http::Protocol::Http10);
@@ -132,11 +150,20 @@ TEST(RequestInfoImplTest, MiscSettersAndGetters) {
     NiceMock<Router::MockRouteEntry> route_entry;
     request_info.route_entry_ = &route_entry;
     EXPECT_EQ(&route_entry, request_info.routeEntry());
+
+    request_info.perRequestState().setData("test", std::make_unique<TestIntAccessor>(1));
+    EXPECT_EQ(1, request_info.perRequestState().getData<TestIntAccessor>("test").access());
+
+    EXPECT_EQ("", request_info.requestedServerName());
+    absl::string_view sni_name = "stubserver.org";
+    request_info.setRequestedServerName(sni_name);
+    EXPECT_EQ(std::string(sni_name), request_info.requestedServerName());
   }
 }
 
-TEST(RequestInfoImplTest, DynamicMetadataTest) {
-  RequestInfoImpl request_info(Http::Protocol::Http2);
+TEST_F(RequestInfoImplTest, DynamicMetadataTest) {
+  RequestInfoImpl request_info(Http::Protocol::Http2, test_time_.timeSystem());
+
   EXPECT_EQ(0, request_info.dynamicMetadata().filter_metadata_size());
   request_info.setDynamicMetadata("com.test",
                                   MessageUtil::keyValueStruct("test_key", "test_value"));

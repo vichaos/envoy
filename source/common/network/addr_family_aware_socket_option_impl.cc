@@ -10,12 +10,14 @@
 namespace Envoy {
 namespace Network {
 
-bool AddrFamilyAwareSocketOptionImpl::setOption(Socket& socket, Socket::SocketState state) const {
+bool AddrFamilyAwareSocketOptionImpl::setOption(
+    Socket& socket, envoy::api::v2::core::SocketOption::SocketState state) const {
   return setIpSocketOption(socket, state, ipv4_option_, ipv6_option_);
 }
 
 bool AddrFamilyAwareSocketOptionImpl::setIpSocketOption(
-    Socket& socket, Socket::SocketState state, const std::unique_ptr<SocketOptionImpl>& ipv4_option,
+    Socket& socket, envoy::api::v2::core::SocketOption::SocketState state,
+    const std::unique_ptr<SocketOptionImpl>& ipv4_option,
     const std::unique_ptr<SocketOptionImpl>& ipv6_option) {
   // If this isn't IP, we're out of luck.
   Address::InstanceConstSharedPtr address;
@@ -45,7 +47,7 @@ bool AddrFamilyAwareSocketOptionImpl::setIpSocketOption(
     return ipv4_option->setOption(socket, state);
   }
 
-  // If the FD is v6, we first try the IPv6 variant if the platfrom supports it and fallback to the
+  // If the FD is v6, we first try the IPv6 variant if the platform supports it and fallback to the
   // IPv4 variant otherwise.
   ASSERT(ip->version() == Network::Address::IpVersion::v6);
   if (ipv6_option->isSupported()) {

@@ -68,6 +68,7 @@ envoy_cc_library(
 envoy_cc_library(
     name = "header_map_interface",
     hdrs = ["header_map.h"],
+    deps = ["//source/common/common:hash_lib"],
 )
 
 envoy_cc_library(
@@ -82,4 +83,9 @@ envoy_cc_library(
 envoy_cc_library(
     name = "protocol_interface",
     hdrs = ["protocol.h"],
+)
+
+envoy_cc_library(
+    name = "query_params_interface",
+    hdrs = ["query_params.h"],
 )
