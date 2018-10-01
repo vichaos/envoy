@@ -12,6 +12,7 @@ envoy_cc_library(
     name = "cluster_manager_interface",
     hdrs = ["cluster_manager.h"],
     deps = [
+        ":health_checker_interface",
         ":load_balancer_interface",
         ":thread_local_cluster_interface",
         ":upstream_interface",
@@ -24,6 +25,7 @@ envoy_cc_library(
         "//include/envoy/runtime:runtime_interface",
         "//include/envoy/secret:secret_manager_interface",
         "//include/envoy/server:admin_interface",
+        "//include/envoy/tcp:conn_pool_interface",
         "@envoy_api//envoy/api/v2:cds_cc",
         "@envoy_api//envoy/config/bootstrap/v2:bootstrap_cc",
     ],
@@ -32,7 +34,10 @@ envoy_cc_library(
 envoy_cc_library(
     name = "health_checker_interface",
     hdrs = ["health_checker.h"],
-    deps = [":upstream_interface"],
+    deps = [
+        ":upstream_interface",
+        "@envoy_api//envoy/data/core/v2alpha:health_check_event_cc",
+    ],
 )
 
 envoy_cc_library(
@@ -71,11 +76,28 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "locality_lib",
+    hdrs = ["locality.h"],
+    deps = [
+        "//source/common/protobuf:utility_lib",
+        "@envoy_api//envoy/api/v2/core:base_cc",
+    ],
+)
+
+envoy_cc_library(
     name = "outlier_detection_interface",
     hdrs = ["outlier_detection.h"],
     external_deps = ["abseil_optional"],
     deps = [
         "//include/envoy/common:time_interface",
+    ],
+)
+
+envoy_cc_library(
+    name = "retry_interface",
+    hdrs = ["retry.h"],
+    deps = [
+        "//include/envoy/upstream:upstream_interface",
     ],
 )
 
@@ -96,11 +118,14 @@ envoy_cc_library(
     deps = [
         ":health_check_host_monitor_interface",
         ":load_balancer_type_interface",
+        ":locality_lib",
         ":resource_manager_interface",
         "//include/envoy/common:callback",
         "//include/envoy/http:codec_interface",
         "//include/envoy/network:connection_interface",
         "//include/envoy/network:transport_socket_interface",
+        "//include/envoy/runtime:runtime_interface",
         "//include/envoy/ssl:context_interface",
+        "//include/envoy/ssl:context_manager_interface",
     ],
 )

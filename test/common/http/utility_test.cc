@@ -14,9 +14,9 @@
 
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::Invoke;
 using testing::InvokeWithoutArgs;
-using testing::_;
 
 namespace Envoy {
 namespace Http {
@@ -46,6 +46,8 @@ TEST(HttpUtility, isWebSocketUpgradeRequest) {
   EXPECT_FALSE(Utility::isWebSocketUpgradeRequest(TestHeaderMapImpl{{"upgrade", "websocket"}}));
   EXPECT_FALSE(Utility::isWebSocketUpgradeRequest(
       TestHeaderMapImpl{{"Connection", "close"}, {"Upgrade", "websocket"}}));
+  EXPECT_FALSE(Utility::isUpgrade(
+      TestHeaderMapImpl{{"Connection", "IsNotAnUpgrade"}, {"Upgrade", "websocket"}}));
 
   EXPECT_TRUE(Utility::isWebSocketUpgradeRequest(
       TestHeaderMapImpl{{"Connection", "upgrade"}, {"Upgrade", "websocket"}}));
@@ -53,6 +55,110 @@ TEST(HttpUtility, isWebSocketUpgradeRequest) {
       TestHeaderMapImpl{{"connection", "upgrade"}, {"upgrade", "websocket"}}));
   EXPECT_TRUE(Utility::isWebSocketUpgradeRequest(
       TestHeaderMapImpl{{"connection", "Upgrade"}, {"upgrade", "WebSocket"}}));
+}
+
+TEST(HttpUtility, isUpgrade) {
+  EXPECT_FALSE(Utility::isUpgrade(TestHeaderMapImpl{}));
+  EXPECT_FALSE(Utility::isUpgrade(TestHeaderMapImpl{{"connection", "upgrade"}}));
+  EXPECT_FALSE(Utility::isUpgrade(TestHeaderMapImpl{{"upgrade", "foo"}}));
+  EXPECT_FALSE(Utility::isUpgrade(TestHeaderMapImpl{{"Connection", "close"}, {"Upgrade", "foo"}}));
+  EXPECT_FALSE(
+      Utility::isUpgrade(TestHeaderMapImpl{{"Connection", "IsNotAnUpgrade"}, {"Upgrade", "foo"}}));
+  EXPECT_FALSE(Utility::isUpgrade(
+      TestHeaderMapImpl{{"Connection", "Is Not An Upgrade"}, {"Upgrade", "foo"}}));
+
+  EXPECT_TRUE(Utility::isUpgrade(TestHeaderMapImpl{{"Connection", "upgrade"}, {"Upgrade", "foo"}}));
+  EXPECT_TRUE(Utility::isUpgrade(TestHeaderMapImpl{{"connection", "upgrade"}, {"upgrade", "foo"}}));
+  EXPECT_TRUE(Utility::isUpgrade(TestHeaderMapImpl{{"connection", "Upgrade"}, {"upgrade", "FoO"}}));
+  EXPECT_TRUE(Utility::isUpgrade(
+      TestHeaderMapImpl{{"connection", "keep-alive, Upgrade"}, {"upgrade", "FOO"}}));
+}
+
+// Start with H1 style websocket request headers. Transform to H2 and back.
+TEST(HttpUtility, H1H2H1Request) {
+  TestHeaderMapImpl converted_headers = {
+      {":method", "GET"}, {"content-length", "0"}, {"Upgrade", "foo"}, {"Connection", "upgrade"}};
+  const TestHeaderMapImpl original_headers(converted_headers);
+
+  ASSERT_TRUE(Utility::isUpgrade(converted_headers));
+  ASSERT_FALSE(Utility::isH2UpgradeRequest(converted_headers));
+  Utility::transformUpgradeRequestFromH1toH2(converted_headers);
+
+  ASSERT_FALSE(Utility::isUpgrade(converted_headers));
+  ASSERT_TRUE(Utility::isH2UpgradeRequest(converted_headers));
+  Utility::transformUpgradeRequestFromH2toH1(converted_headers);
+
+  ASSERT_TRUE(Utility::isUpgrade(converted_headers));
+  ASSERT_FALSE(Utility::isH2UpgradeRequest(converted_headers));
+  ASSERT_EQ(converted_headers, original_headers);
+}
+
+// Start with H2 style websocket request headers. Transform to H1 and back.
+TEST(HttpUtility, H2H1H2Request) {
+  TestHeaderMapImpl converted_headers = {
+      {":method", "CONNECT"}, {"content-length", "0"}, {":protocol", "websocket"}};
+  const TestHeaderMapImpl original_headers(converted_headers);
+
+  ASSERT_FALSE(Utility::isUpgrade(converted_headers));
+  ASSERT_TRUE(Utility::isH2UpgradeRequest(converted_headers));
+  Utility::transformUpgradeRequestFromH2toH1(converted_headers);
+
+  ASSERT_TRUE(Utility::isUpgrade(converted_headers));
+  ASSERT_FALSE(Utility::isH2UpgradeRequest(converted_headers));
+  Utility::transformUpgradeRequestFromH1toH2(converted_headers);
+
+  ASSERT_FALSE(Utility::isUpgrade(converted_headers));
+  ASSERT_TRUE(Utility::isH2UpgradeRequest(converted_headers));
+  ASSERT_EQ(converted_headers, original_headers);
+}
+
+// Start with H1 style websocket response headers. Transform to H2 and back.
+TEST(HttpUtility, H1H2H1Response) {
+  TestHeaderMapImpl converted_headers = {{":status", "101"},
+                                         {"content-length", "0"},
+                                         {"upgrade", "websocket"},
+                                         {"connection", "upgrade"}};
+  const TestHeaderMapImpl original_headers(converted_headers);
+
+  ASSERT_TRUE(Utility::isUpgrade(converted_headers));
+  Utility::transformUpgradeResponseFromH1toH2(converted_headers);
+
+  ASSERT_FALSE(Utility::isUpgrade(converted_headers));
+  Utility::transformUpgradeResponseFromH2toH1(converted_headers, "websocket");
+
+  ASSERT_TRUE(Utility::isUpgrade(converted_headers));
+  ASSERT_EQ(converted_headers, original_headers);
+}
+
+// Users of the transformation functions should not expect the results to be
+// identical. Because the headers are always added in a set order, the original
+// header order may not be preserved.
+TEST(HttpUtility, OrderNotPreserved) {
+  TestHeaderMapImpl expected_headers = {
+      {":method", "GET"}, {"content-length", "0"}, {"Upgrade", "foo"}, {"Connection", "upgrade"}};
+
+  TestHeaderMapImpl converted_headers = {
+      {":method", "GET"}, {"content-length", "0"}, {"Connection", "upgrade"}, {"Upgrade", "foo"}};
+
+  Utility::transformUpgradeRequestFromH1toH2(converted_headers);
+  Utility::transformUpgradeRequestFromH2toH1(converted_headers);
+  EXPECT_EQ(converted_headers, expected_headers);
+}
+
+// A more serious problem with using WebSocket help for general Upgrades, is that method for
+// WebSocket is always GET but the method for other upgrades is allowed to be a
+// POST. This is a documented weakness in Envoy docs and can be addressed with
+// a custom x-envoy-original-method header if it is ever needed.
+TEST(HttpUtility, MethodNotPreserved) {
+  TestHeaderMapImpl expected_headers = {
+      {":method", "GET"}, {"content-length", "0"}, {"Upgrade", "foo"}, {"Connection", "upgrade"}};
+
+  TestHeaderMapImpl converted_headers = {
+      {":method", "POST"}, {"content-length", "0"}, {"Upgrade", "foo"}, {"Connection", "upgrade"}};
+
+  Utility::transformUpgradeRequestFromH1toH2(converted_headers);
+  Utility::transformUpgradeRequestFromH2toH1(converted_headers);
+  EXPECT_EQ(converted_headers, expected_headers);
 }
 
 TEST(HttpUtility, appendXff) {
@@ -314,7 +420,7 @@ TEST(HttpUtility, SendLocalReply) {
 
   EXPECT_CALL(callbacks, encodeHeaders_(_, false));
   EXPECT_CALL(callbacks, encodeData(_, true));
-  Utility::sendLocalReply(false, callbacks, is_reset, Http::Code::PayloadTooLarge, "large");
+  Utility::sendLocalReply(false, callbacks, is_reset, Http::Code::PayloadTooLarge, "large", false);
 }
 
 TEST(HttpUtility, SendLocalGrpcReply) {
@@ -329,7 +435,7 @@ TEST(HttpUtility, SendLocalGrpcReply) {
         EXPECT_NE(headers.GrpcMessage(), nullptr);
         EXPECT_STREQ(headers.GrpcMessage()->value().c_str(), "large");
       }));
-  Utility::sendLocalReply(true, callbacks, is_reset, Http::Code::PayloadTooLarge, "large");
+  Utility::sendLocalReply(true, callbacks, is_reset, Http::Code::PayloadTooLarge, "large", false);
 }
 
 TEST(HttpUtility, SendLocalReplyDestroyedEarly) {
@@ -340,7 +446,18 @@ TEST(HttpUtility, SendLocalReplyDestroyedEarly) {
     is_reset = true;
   }));
   EXPECT_CALL(callbacks, encodeData(_, true)).Times(0);
-  Utility::sendLocalReply(false, callbacks, is_reset, Http::Code::PayloadTooLarge, "large");
+  Utility::sendLocalReply(false, callbacks, is_reset, Http::Code::PayloadTooLarge, "large", false);
+}
+
+TEST(HttpUtility, SendLocalReplyHeadRequest) {
+  MockStreamDecoderFilterCallbacks callbacks;
+  bool is_reset = false;
+  EXPECT_CALL(callbacks, encodeHeaders_(_, true))
+      .WillOnce(Invoke([&](const HeaderMap& headers, bool) -> void {
+        EXPECT_STREQ(headers.ContentLength()->value().c_str(),
+                     fmt::format("{}", strlen("large")).c_str());
+      }));
+  Utility::sendLocalReply(false, callbacks, is_reset, Http::Code::PayloadTooLarge, "large", true);
 }
 
 TEST(HttpUtility, TestExtractHostPathFromUri) {
@@ -388,6 +505,13 @@ TEST(HttpUtility, TestPrepareHeaders) {
 
   EXPECT_STREQ("/x/y/z", message->headers().Path()->value().c_str());
   EXPECT_STREQ("dns.name", message->headers().Host()->value().c_str());
+}
+
+TEST(HttpUtility, QueryParamsToString) {
+  EXPECT_EQ("", Utility::queryParamsToString(Utility::QueryParams({})));
+  EXPECT_EQ("?a=1", Utility::queryParamsToString(Utility::QueryParams({{"a", "1"}})));
+  EXPECT_EQ("?a=1&b=2",
+            Utility::queryParamsToString(Utility::QueryParams({{"a", "1"}, {"b", "2"}})));
 }
 
 } // namespace Http

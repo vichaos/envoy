@@ -23,14 +23,15 @@ namespace {
  * Validate inline jwks, make sure they are the valid
  */
 void validateJwtConfig(const JwtAuthentication& proto_config) {
-  for (const auto& rule : proto_config.rules()) {
-    const auto inline_jwks = Config::DataSource::read(rule.local_jwks(), true);
+  for (const auto& it : proto_config.providers()) {
+    const auto& provider = it.second;
+    const auto inline_jwks = Config::DataSource::read(provider.local_jwks(), true);
     if (!inline_jwks.empty()) {
       auto jwks_obj = Jwks::createFrom(inline_jwks, Jwks::JWKS);
       if (jwks_obj->getStatus() != Status::Ok) {
-        throw EnvoyException(
-            fmt::format("Issuer '{}' in jwt_authn config has invalid local jwks: {}", rule.issuer(),
-                        ::google::jwt_verify::getStatusString(jwks_obj->getStatus())));
+        throw EnvoyException(fmt::format(
+            "Issuer '{}' in jwt_authn config has invalid local jwks: {}", provider.issuer(),
+            ::google::jwt_verify::getStatusString(jwks_obj->getStatus())));
       }
     }
   }
@@ -45,8 +46,7 @@ FilterFactory::createFilterFactoryFromProtoTyped(const JwtAuthentication& proto_
   validateJwtConfig(proto_config);
   auto filter_config = std::make_shared<FilterConfig>(proto_config, prefix, context);
   return [filter_config](Http::FilterChainFactoryCallbacks& callbacks) -> void {
-    callbacks.addStreamDecoderFilter(
-        std::make_shared<Filter>(filter_config->stats(), Authenticator::create(filter_config)));
+    callbacks.addStreamDecoderFilter(std::make_shared<Filter>(filter_config));
   };
 }
 

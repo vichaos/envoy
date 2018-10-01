@@ -90,6 +90,9 @@ private:
   struct NullCorsPolicy : public Router::CorsPolicy {
     // Router::CorsPolicy
     const std::list<std::string>& allowOrigins() const override { return allow_origin_; };
+    const std::list<std::regex>& allowOriginRegexes() const override {
+      return allow_origin_regex_;
+    };
     const std::string& allowMethods() const override { return EMPTY_STRING; };
     const std::string& allowHeaders() const override { return EMPTY_STRING; };
     const std::string& exposeHeaders() const override { return EMPTY_STRING; };
@@ -98,6 +101,7 @@ private:
     bool enabled() const override { return false; };
 
     static const std::list<std::string> allow_origin_;
+    static const std::list<std::regex> allow_origin_regex_;
     static const absl::optional<bool> allow_credentials_;
   };
 
@@ -118,6 +122,12 @@ private:
     std::chrono::milliseconds perTryTimeout() const override {
       return std::chrono::milliseconds(0);
     }
+    std::vector<Upstream::RetryHostPredicateSharedPtr> retryHostPredicates() const override {
+      return {};
+    }
+    Upstream::RetryPrioritySharedPtr retryPriority() const override { return {}; }
+
+    uint32_t hostSelectionMaxAttempts() const override { return 1; }
     uint32_t numRetries() const override { return 0; }
     uint32_t retryOn() const override { return 0; }
   };
@@ -191,6 +201,7 @@ private:
         return std::chrono::milliseconds(0);
       }
     }
+    absl::optional<std::chrono::milliseconds> idleTimeout() const override { return absl::nullopt; }
     absl::optional<std::chrono::milliseconds> maxGrpcTimeout() const override {
       return absl::nullopt;
     }
@@ -202,12 +213,12 @@ private:
     }
     const Router::VirtualHost& virtualHost() const override { return virtual_host_; }
     bool autoHostRewrite() const override { return false; }
-    bool useWebSocket() const override { return false; }
+    bool useOldStyleWebSocket() const override { return false; }
     Http::WebSocketProxyPtr createWebSocketProxy(Http::HeaderMap&, RequestInfo::RequestInfo&,
                                                  Http::WebSocketProxyCallbacks&,
                                                  Upstream::ClusterManager&,
                                                  Network::ReadFilterCallbacks*) const override {
-      NOT_IMPLEMENTED;
+      NOT_IMPLEMENTED_GCOVR_EXCL_LINE;
     }
     bool includeVirtualHostRateLimits() const override { return true; }
     const envoy::api::v2::core::Metadata& metadata() const override { return metadata_; }
@@ -262,8 +273,9 @@ private:
   RequestInfo::RequestInfo& requestInfo() override { return request_info_; }
   Tracing::Span& activeSpan() override { return active_span_; }
   const Tracing::Config& tracingConfig() override { return tracing_config_; }
-  void continueDecoding() override { NOT_IMPLEMENTED; }
-  void addDecodedData(Buffer::Instance&, bool) override { NOT_IMPLEMENTED; }
+  void continueDecoding() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  HeaderMap& addDecodedTrailers() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  void addDecodedData(Buffer::Instance&, bool) override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   const Buffer::Instance* decodingBuffer() override { return buffered_body_.get(); }
   void sendLocalReply(Code code, const std::string& body,
                       std::function<void(HeaderMap& headers)> modify_headers) override {
@@ -276,7 +288,7 @@ private:
           encodeHeaders(std::move(headers), end_stream);
         },
         [this](Buffer::Instance& data, bool end_stream) -> void { encodeData(data, end_stream); },
-        remote_closed_, code, body);
+        remote_closed_, code, body, is_head_request_);
   }
   // The async client won't pause if sending an Expect: 100-Continue so simply
   // swallows any incoming encode100Continue.
@@ -302,6 +314,7 @@ private:
   bool remote_closed_{};
   Buffer::InstancePtr buffered_body_;
   bool is_grpc_request_{};
+  bool is_head_request_{false};
   friend class AsyncClientImpl;
 };
 

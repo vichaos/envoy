@@ -7,8 +7,12 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "envoy/common/pure.h"
+
+#include "common/common/hash.h"
 
 #include "absl/strings/string_view.h"
 
@@ -27,12 +31,25 @@ public:
 
   const std::string& get() const { return string_; }
   bool operator==(const LowerCaseString& rhs) const { return string_ == rhs.string_; }
+  bool operator!=(const LowerCaseString& rhs) const { return string_ != rhs.string_; }
 
 private:
   void lower() { std::transform(string_.begin(), string_.end(), string_.begin(), tolower); }
 
   std::string string_;
 };
+
+/**
+ * Lower case string hasher.
+ */
+struct LowerCaseStringHash {
+  size_t operator()(const LowerCaseString& value) const { return HashUtil::xxHash64(value.get()); }
+};
+
+/**
+ * Convenient type for unordered set of lower case string.
+ */
+typedef std::unordered_set<LowerCaseString, LowerCaseStringHash> LowerCaseStrUnorderedSet;
 
 /**
  * This is a string implementation for use in header processing. It is heavily optimized for
@@ -107,31 +124,6 @@ public:
   bool find(const char* str) const { return strstr(c_str(), str); }
 
   /**
-   * HeaderString is in token list form, each token separated by commas or whitespace,
-   * see https://www.w3.org/Protocols/rfc2616/rfc2616-sec2.html#sec2.1 for more information,
-   * header field value's case sensitivity depends on each header.
-   * @return whether contains token in case insensitive manner.
-   */
-  bool caseInsensitiveContains(const char* token) const {
-    // Avoid dead loop if token argument is empty.
-    const int n = strlen(token);
-    if (n == 0) {
-      return false;
-    }
-
-    // Find token substring, skip if it's partial of other token.
-    const char* tokens = c_str();
-    for (const char* p = tokens; (p = strcasestr(p, token)); p += n) {
-      if ((p == tokens || *(p - 1) == ' ' || *(p - 1) == ',') &&
-          (*(p + n) == '\0' || *(p + n) == ' ' || *(p + n) == ',')) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
    * Set the value of the string by copying data into it. This overwrites any existing string.
    */
   void setCopy(const char* data, uint32_t size);
@@ -162,13 +154,17 @@ public:
   bool operator!=(const char* rhs) const { return 0 != strcmp(c_str(), rhs); }
 
 private:
-  union {
+  union Buffer {
+    // This should reference inline_buffer_ for Type::Inline.
     char* dynamic_;
     const char* ref_;
   } buffer_;
 
+  // Capacity in both Type::Inline and Type::Dynamic cases must be at least MinDynamicCapacity in
+  // header_map_impl.cc.
   union {
     char inline_buffer_[128];
+    // Since this is a union, this is only valid for type_ == Type::Dynamic.
     uint32_t dynamic_capacity_;
   };
 
@@ -281,9 +277,11 @@ private:
   HEADER_FUNC(KeepAlive)                                                                           \
   HEADER_FUNC(LastModified)                                                                        \
   HEADER_FUNC(Method)                                                                              \
+  HEADER_FUNC(NoChunks)                                                                            \
   HEADER_FUNC(Origin)                                                                              \
   HEADER_FUNC(OtSpanContext)                                                                       \
   HEADER_FUNC(Path)                                                                                \
+  HEADER_FUNC(Protocol)                                                                            \
   HEADER_FUNC(ProxyConnection)                                                                     \
   HEADER_FUNC(Referer)                                                                             \
   HEADER_FUNC(RequestId)                                                                           \
@@ -328,10 +326,12 @@ public:
   /**
    * Add a reference header to the map. Both key and value MUST point to data that will live beyond
    * the lifetime of any request/response using the string (since a codec may optimize for zero
-   * copy). Nothing will be copied.
+   * copy). The key will not be copied and a best effort will be made not to
+   * copy the value (but this may happen when comma concatenating, see below).
    *
-   * Calling addReference multiple times for the same header will result in multiple headers being
-   * present in the HeaderMap.
+   * Calling addReference multiple times for the same header will result in:
+   * - Comma concatenation for predefined inline headers.
+   * - Multiple headers being present in the HeaderMap for other headers.
    *
    * @param key specifies the name of the header to add; it WILL NOT be copied.
    * @param value specifies the value of the header to add; it WILL NOT be copied.
@@ -343,8 +343,9 @@ public:
    * the lifetime of any request/response using the string (since a codec may optimize for zero
    * copy). The value will be copied.
    *
-   * Calling addReferenceKey multiple times for the same header will result in multiple headers
-   * being present in the HeaderMap.
+   * Calling addReference multiple times for the same header will result in:
+   * - Comma concatenation for predefined inline headers.
+   * - Multiple headers being present in the HeaderMap for other headers.
    *
    * @param key specifies the name of the header to add; it WILL NOT be copied.
    * @param value specifies the value of the header to add; it WILL be copied.
@@ -356,8 +357,9 @@ public:
    * live beyond the lifetime of any request/response using the string (since a codec may optimize
    * for zero copy). The value will be copied.
    *
-   * Calling addReferenceKey multiple times for the same header will result in multiple headers
-   * being present in the HeaderMap.
+   * Calling addReference multiple times for the same header will result in:
+   * - Comma concatenation for predefined inline headers.
+   * - Multiple headers being present in the HeaderMap for other headers.
    *
    * @param key specifies the name of the header to add; it WILL NOT be copied.
    * @param value specifies the value of the header to add; it WILL be copied.
@@ -367,8 +369,9 @@ public:
   /**
    * Add a header by copying both the header key and the value.
    *
-   * Calling addCopy multiple times for the same header will result in multiple headers being
-   * present in the HeaderMap.
+   * Calling addCopy multiple times for the same header will result in:
+   * - Comma concatenation for predefined inline headers.
+   * - Multiple headers being present in the HeaderMap for other headers.
    *
    * @param key specifies the name of the header to add; it WILL be copied.
    * @param value specifies the value of the header to add; it WILL be copied.
@@ -378,8 +381,9 @@ public:
   /**
    * Add a header by copying both the header key and the value.
    *
-   * Calling addCopy multiple times for the same header will result in multiple headers being
-   * present in the HeaderMap.
+   * Calling addCopy multiple times for the same header will result in:
+   * - Comma concatenation for predefined inline headers.
+   * - Multiple headers being present in the HeaderMap for other headers.
    *
    * @param key specifies the name of the header to add; it WILL be copied.
    * @param value specifies the value of the header to add; it WILL be copied.
@@ -497,6 +501,11 @@ public:
 };
 
 typedef std::unique_ptr<HeaderMap> HeaderMapPtr;
+
+/**
+ * Convenient container type for storing Http::LowerCaseString and std::string key/value pairs.
+ */
+typedef std::vector<std::pair<LowerCaseString, std::string>> HeaderVector;
 
 } // namespace Http
 } // namespace Envoy

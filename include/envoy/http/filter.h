@@ -191,6 +191,17 @@ public:
   virtual void addDecodedData(Buffer::Instance& data, bool streaming_filter) PURE;
 
   /**
+   * Adds decoded trailers. May only be called in decodeData when end_stream is set to true.
+   * If called in any other context, an assertion will be triggered.
+   *
+   * When called in decodeData, the trailers map will be initialized to an empty map and returned by
+   * reference. Calling this function more than once is invalid.
+   *
+   * @return a reference to the newly created trailers map.
+   */
+  virtual HeaderMap& addDecodedTrailers() PURE;
+
+  /**
    * Create a locally generated response using the provided response_code and body_text parameters.
    * If the request was a gRPC request the local reply will be encoded as a gRPC response with a 200
    * HTTP response code and grpc-status and grpc-message headers mapped from the provided
@@ -396,6 +407,17 @@ public:
   virtual void addEncodedData(Buffer::Instance& data, bool streaming_filter) PURE;
 
   /**
+   * Adds encoded trailers. May only be called in encodeData when end_stream is set to true.
+   * If called in any other context, an assertion will be triggered.
+   *
+   * When called in encodeData, the trailers map will be initialized to an empty map and returned by
+   * reference. Calling this function more than once is invalid.
+   *
+   * @return a reference to the newly created trailers map.
+   */
+  virtual HeaderMap& addEncodedTrailers() PURE;
+
+  /**
    * Called when an encoder filter goes over its high watermark.
    */
   virtual void onEncoderFilterAboveWriteBufferHighWatermark() PURE;
@@ -458,7 +480,7 @@ public:
 
   /**
    * Called with trailers to be encoded, implicitly ending the stream.
-   * @param trailers supplies the trailes to be encoded.
+   * @param trailers supplies the trailers to be encoded.
    */
   virtual FilterTrailersStatus encodeTrailers(HeaderMap& trailers) PURE;
 
@@ -532,11 +554,22 @@ public:
   virtual ~FilterChainFactory() {}
 
   /**
-   * Called when a new stream is created on the connection.
+   * Called when a new HTTP stream is created on the connection.
    * @param callbacks supplies the "sink" that is used for actually creating the filter chain. @see
    *                  FilterChainFactoryCallbacks.
    */
   virtual void createFilterChain(FilterChainFactoryCallbacks& callbacks) PURE;
+
+  /**
+   * Called when a new upgrade stream is created on the connection.
+   * @param upgrade supplies the upgrade header from downstream
+   * @param callbacks supplies the "sink" that is used for actually creating the filter chain. @see
+   *                  FilterChainFactoryCallbacks.
+   * @return true if upgrades of this type are allowed and the filter chain has been created.
+   *    returns false if this upgrade type is not configured, and no filter chain is created.
+   */
+  virtual bool createUpgradeFilterChain(absl::string_view upgrade,
+                                        FilterChainFactoryCallbacks& callbacks) PURE;
 };
 
 } // namespace Http

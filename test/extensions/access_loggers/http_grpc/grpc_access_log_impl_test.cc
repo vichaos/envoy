@@ -9,11 +9,11 @@
 #include "test/mocks/thread_local/mocks.h"
 
 using namespace std::chrono_literals;
+using testing::_;
 using testing::InSequence;
 using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
-using testing::_;
 
 namespace Envoy {
 namespace Extensions {
@@ -219,7 +219,7 @@ http_logs:
     request_info.addBytesReceived(10);
     request_info.addBytesSent(20);
     request_info.response_code_ = 200;
-    ON_CALL(request_info, getResponseFlag(RequestInfo::ResponseFlag::FaultInjected))
+    ON_CALL(request_info, hasResponseFlag(RequestInfo::ResponseFlag::FaultInjected))
         .WillByDefault(Return(true));
 
     Http::TestHeaderMapImpl request_headers{
@@ -414,7 +414,7 @@ http_logs:
 
 TEST(responseFlagsToAccessLogResponseFlagsTest, All) {
   NiceMock<RequestInfo::MockRequestInfo> request_info;
-  ON_CALL(request_info, getResponseFlag(_)).WillByDefault(Return(true));
+  ON_CALL(request_info, hasResponseFlag(_)).WillByDefault(Return(true));
   envoy::data::accesslog::v2::AccessLogCommon common_access_log;
   HttpGrpcAccessLog::responseFlagsToAccessLogResponseFlags(common_access_log, request_info);
 
@@ -434,6 +434,7 @@ TEST(responseFlagsToAccessLogResponseFlagsTest, All) {
   common_access_log_expected.mutable_response_flags()->mutable_unauthorized_details()->set_reason(
       envoy::data::accesslog::v2::ResponseFlags_Unauthorized_Reason::
           ResponseFlags_Unauthorized_Reason_EXTERNAL_SERVICE);
+  common_access_log_expected.mutable_response_flags()->set_rate_limit_service_error(true);
 
   EXPECT_EQ(common_access_log_expected.DebugString(), common_access_log.DebugString());
 }

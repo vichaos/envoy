@@ -8,10 +8,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::Const;
 using testing::Return;
 using testing::ReturnRef;
-using testing::_;
 
 namespace Envoy {
 namespace Extensions {
@@ -20,10 +20,12 @@ namespace Common {
 namespace RBAC {
 namespace {
 
-void checkMatcher(const RBAC::Matcher& matcher, bool expected,
-                  const Envoy::Network::Connection& connection = Envoy::Network::MockConnection(),
-                  const Envoy::Http::HeaderMap& headers = Envoy::Http::HeaderMapImpl()) {
-  EXPECT_EQ(expected, matcher.matches(connection, headers));
+void checkMatcher(
+    const RBAC::Matcher& matcher, bool expected,
+    const Envoy::Network::Connection& connection = Envoy::Network::MockConnection(),
+    const Envoy::Http::HeaderMap& headers = Envoy::Http::HeaderMapImpl(),
+    const envoy::api::v2::core::Metadata& metadata = envoy::api::v2::core::Metadata()) {
+  EXPECT_EQ(expected, matcher.matches(connection, headers, metadata));
 }
 
 TEST(AlwaysMatcher, AlwaysMatches) { checkMatcher(RBAC::AlwaysMatcher(), true); }
@@ -114,6 +116,20 @@ TEST(OrMatcher, Principal_Set) {
   checkMatcher(RBAC::OrMatcher(set), true, conn);
 }
 
+TEST(NotMatcher, Permission) {
+  envoy::config::rbac::v2alpha::Permission perm;
+  perm.set_any(true);
+
+  checkMatcher(RBAC::NotMatcher(perm), false, Envoy::Network::MockConnection());
+}
+
+TEST(NotMatcher, Principal) {
+  envoy::config::rbac::v2alpha::Principal principal;
+  principal.set_any(true);
+
+  checkMatcher(RBAC::NotMatcher(principal), false, Envoy::Network::MockConnection());
+}
+
 TEST(HeaderMatcher, HeaderMatcher) {
   envoy::api::v2::route::HeaderMatcher config;
   config.set_name("foo");
@@ -176,32 +192,44 @@ TEST(AuthenticatedMatcher, uriSanPeerCertificate) {
   Envoy::Network::MockConnection conn;
   Envoy::Ssl::MockConnection ssl;
 
-  EXPECT_CALL(ssl, uriSanPeerCertificate()).WillOnce(Return("foo"));
-  EXPECT_CALL(Const(conn), ssl()).WillOnce(Return(&ssl));
+  EXPECT_CALL(ssl, uriSanPeerCertificate()).WillRepeatedly(Return("foo"));
+  EXPECT_CALL(Const(conn), ssl()).WillRepeatedly(Return(&ssl));
 
   envoy::config::rbac::v2alpha::Principal_Authenticated auth;
-  auth.set_name("foo");
+  auth.mutable_principal_name()->set_exact("foo");
   checkMatcher(AuthenticatedMatcher(auth), true, conn);
+
+  auth.mutable_principal_name()->set_exact("bar");
+  checkMatcher(AuthenticatedMatcher(auth), false, conn);
 }
 
 TEST(AuthenticatedMatcher, subjectPeerCertificate) {
   Envoy::Network::MockConnection conn;
   Envoy::Ssl::MockConnection ssl;
 
-  EXPECT_CALL(ssl, uriSanPeerCertificate()).WillOnce(Return(""));
-  EXPECT_CALL(ssl, subjectPeerCertificate()).WillOnce(Return("bar"));
-  EXPECT_CALL(Const(conn), ssl()).WillOnce(Return(&ssl));
+  EXPECT_CALL(ssl, uriSanPeerCertificate()).WillRepeatedly(Return(""));
+  EXPECT_CALL(ssl, subjectPeerCertificate()).WillRepeatedly(Return("bar"));
+  EXPECT_CALL(Const(conn), ssl()).WillRepeatedly(Return(&ssl));
 
   envoy::config::rbac::v2alpha::Principal_Authenticated auth;
-  auth.set_name("bar");
+  auth.mutable_principal_name()->set_exact("bar");
   checkMatcher(AuthenticatedMatcher(auth), true, conn);
+
+  auth.mutable_principal_name()->set_exact("foo");
+  checkMatcher(AuthenticatedMatcher(auth), false, conn);
 }
 
 TEST(AuthenticatedMatcher, AnySSLSubject) {
   Envoy::Network::MockConnection conn;
   Envoy::Ssl::MockConnection ssl;
-  EXPECT_CALL(Const(conn), ssl()).WillOnce(Return(&ssl));
-  checkMatcher(AuthenticatedMatcher({}), true, conn);
+  EXPECT_CALL(ssl, uriSanPeerCertificate()).WillRepeatedly(Return("foo"));
+  EXPECT_CALL(Const(conn), ssl()).WillRepeatedly(Return(&ssl));
+
+  envoy::config::rbac::v2alpha::Principal_Authenticated auth;
+  checkMatcher(AuthenticatedMatcher(auth), true, conn);
+
+  auth.mutable_principal_name()->set_regex(".*");
+  checkMatcher(AuthenticatedMatcher(auth), true, conn);
 }
 
 TEST(AuthenticatedMatcher, NoSSL) {
@@ -210,12 +238,33 @@ TEST(AuthenticatedMatcher, NoSSL) {
   checkMatcher(AuthenticatedMatcher({}), false, conn);
 }
 
+TEST(MetadataMatcher, MetadataMatcher) {
+  Envoy::Network::MockConnection conn;
+  Envoy::Http::HeaderMapImpl header;
+
+  auto label = MessageUtil::keyValueStruct("label", "prod");
+  envoy::api::v2::core::Metadata metadata;
+  metadata.mutable_filter_metadata()->insert(
+      Protobuf::MapPair<Envoy::ProtobufTypes::String, ProtobufWkt::Struct>("other", label));
+  metadata.mutable_filter_metadata()->insert(
+      Protobuf::MapPair<Envoy::ProtobufTypes::String, ProtobufWkt::Struct>("rbac", label));
+
+  envoy::type::matcher::MetadataMatcher matcher;
+  matcher.set_filter("rbac");
+  matcher.add_path()->set_key("label");
+
+  matcher.mutable_value()->mutable_string_match()->set_exact("test");
+  checkMatcher(MetadataMatcher(matcher), false, conn, header, metadata);
+  matcher.mutable_value()->mutable_string_match()->set_exact("prod");
+  checkMatcher(MetadataMatcher(matcher), true, conn, header, metadata);
+}
+
 TEST(PolicyMatcher, PolicyMatcher) {
   envoy::config::rbac::v2alpha::Policy policy;
   policy.add_permissions()->set_destination_port(123);
   policy.add_permissions()->set_destination_port(456);
-  policy.add_principals()->mutable_authenticated()->set_name("foo");
-  policy.add_principals()->mutable_authenticated()->set_name("bar");
+  policy.add_principals()->mutable_authenticated()->mutable_principal_name()->set_exact("foo");
+  policy.add_principals()->mutable_authenticated()->mutable_principal_name()->set_exact("bar");
 
   RBAC::PolicyMatcher matcher(policy);
 

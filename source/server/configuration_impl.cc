@@ -50,9 +50,10 @@ void MainImpl::initialize(const envoy::config::bootstrap::v2::Bootstrap& bootstr
   ENVOY_LOG(info, "loading {} static secret(s)", secrets.size());
   for (ssize_t i = 0; i < secrets.size(); i++) {
     ENVOY_LOG(debug, "static secret #{}: {}", i, secrets[i].name());
-    server.secretManager().addOrUpdateSecret(secrets[i]);
+    server.secretManager().addStaticSecret(secrets[i]);
   }
 
+  ENVOY_LOG(info, "loading {} cluster(s)", bootstrap.static_resources().clusters().size());
   cluster_manager_ = cluster_manager_factory.clusterManagerFromProto(
       bootstrap, server.stats(), server.threadLocal(), server.runtime(), server.random(),
       server.localInfo(), server.accessLogManager(), server.admin());
@@ -130,7 +131,9 @@ InitialImpl::InitialImpl(const envoy::config::bootstrap::v2::Bootstrap& bootstra
   admin_.access_log_path_ = admin.access_log_path();
   admin_.profile_path_ =
       admin.profile_path().empty() ? "/var/log/envoy/envoy.prof" : admin.profile_path();
-  admin_.address_ = Network::Address::resolveProtoAddress(admin.address());
+  if (admin.has_address()) {
+    admin_.address_ = Network::Address::resolveProtoAddress(admin.address());
+  }
 
   if (!bootstrap.flags_path().empty()) {
     flags_path_ = bootstrap.flags_path();

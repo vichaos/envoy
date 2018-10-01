@@ -8,10 +8,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::Const;
 using testing::Return;
 using testing::ReturnRef;
-using testing::_;
 
 namespace Envoy {
 namespace Extensions {
@@ -22,8 +22,10 @@ namespace {
 
 void checkEngine(const RBAC::RoleBasedAccessControlEngineImpl& engine, bool expected,
                  const Envoy::Network::Connection& connection = Envoy::Network::MockConnection(),
-                 const Envoy::Http::HeaderMap& headers = Envoy::Http::HeaderMapImpl()) {
-  EXPECT_EQ(expected, engine.allowed(connection, headers));
+                 const Envoy::Http::HeaderMap& headers = Envoy::Http::HeaderMapImpl(),
+                 const envoy::api::v2::core::Metadata& metadata = envoy::api::v2::core::Metadata(),
+                 std::string* policy_id = nullptr) {
+  EXPECT_EQ(expected, engine.allowed(connection, headers, metadata, policy_id));
 }
 
 TEST(RoleBasedAccessControlEngineImpl, Disabled) {

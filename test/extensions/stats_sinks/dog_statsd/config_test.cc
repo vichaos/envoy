@@ -16,10 +16,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
-using testing::_;
 
 namespace Envoy {
 namespace Extensions {
@@ -32,7 +32,7 @@ INSTANTIATE_TEST_CASE_P(IpVersions, DogStatsdConfigLoopbackTest,
                         TestUtility::ipTestParamsToString);
 
 TEST_P(DogStatsdConfigLoopbackTest, ValidUdpIp) {
-  const std::string name = StatsSinkNames::get().DOG_STATSD;
+  const std::string name = StatsSinkNames::get().DogStatsd;
 
   envoy::config::metrics::v2::DogStatsdSink sink_config;
   envoy::api::v2::core::Address& address = *sink_config.mutable_address();

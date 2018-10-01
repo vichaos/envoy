@@ -6,6 +6,9 @@
 #include "envoy/service/metrics/v2/metrics_service.pb.h"
 #include "envoy/service/metrics/v2/metrics_service.pb.validate.h"
 #include "envoy/singleton/instance.h"
+#include "envoy/stats/histogram.h"
+#include "envoy/stats/sink.h"
+#include "envoy/stats/source.h"
 #include "envoy/stats/stats.h"
 #include "envoy/thread_local/thread_local.h"
 #include "envoy/upstream/cluster_manager.h"
@@ -108,7 +111,8 @@ private:
 class MetricsServiceSink : public Stats::Sink {
 public:
   // MetricsService::Sink
-  MetricsServiceSink(const GrpcMetricsStreamerSharedPtr& grpc_metrics_streamer);
+  MetricsServiceSink(const GrpcMetricsStreamerSharedPtr& grpc_metrics_streamer,
+                     Event::TimeSystem& time_system);
   void flush(Stats::Source& source) override;
   void onHistogramComplete(const Stats::Histogram&, uint64_t) override {}
 
@@ -119,6 +123,7 @@ public:
 private:
   GrpcMetricsStreamerSharedPtr grpc_metrics_streamer_;
   envoy::service::metrics::v2::StreamMetricsMessage message_;
+  Event::TimeSystem& time_system_;
 };
 
 } // namespace MetricsService

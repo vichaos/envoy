@@ -4,6 +4,7 @@
 #include <string>
 
 #include "envoy/common/time.h"
+#include "envoy/config/filter/accesslog/v2/accesslog.pb.validate.h"
 #include "envoy/filesystem/filesystem.h"
 #include "envoy/http/header_map.h"
 #include "envoy/runtime/runtime.h"
@@ -17,6 +18,8 @@
 #include "common/http/header_utility.h"
 #include "common/http/headers.h"
 #include "common/http/utility.h"
+#include "common/protobuf/utility.h"
+#include "common/request_info/utility.h"
 #include "common/runtime/uuid_util.h"
 #include "common/tracing/http_tracer_impl.h"
 
@@ -44,7 +47,7 @@ bool ComparisonFilter::compareAgainstValue(uint64_t lhs) {
   case envoy::config::filter::accesslog::v2::ComparisonFilter::LE:
     return lhs <= value;
   default:
-    NOT_REACHED;
+    NOT_REACHED_GCOVR_EXCL_LINE;
   }
 }
 
@@ -68,8 +71,11 @@ FilterFactory::fromProto(const envoy::config::filter::accesslog::v2::AccessLogFi
     return FilterPtr{new OrFilter(config.or_filter(), runtime, random)};
   case envoy::config::filter::accesslog::v2::AccessLogFilter::kHeaderFilter:
     return FilterPtr{new HeaderFilter(config.header_filter())};
+  case envoy::config::filter::accesslog::v2::AccessLogFilter::kResponseFlagFilter:
+    MessageUtil::validate(config);
+    return FilterPtr{new ResponseFlagFilter(config.response_flag_filter())};
   default:
-    NOT_REACHED;
+    NOT_REACHED_GCOVR_EXCL_LINE;
   }
 }
 
@@ -107,14 +113,15 @@ bool RuntimeFilter::evaluate(const RequestInfo::RequestInfo&,
   const Http::HeaderEntry* uuid = request_header.RequestId();
   uint64_t random_value;
   if (use_independent_randomness_ || uuid == nullptr ||
-      !UuidUtils::uuidModBy(uuid->value().c_str(), random_value,
-                            ProtobufPercentHelper::fractionalPercentDenominatorToInt(percent_))) {
+      !UuidUtils::uuidModBy(
+          uuid->value().c_str(), random_value,
+          ProtobufPercentHelper::fractionalPercentDenominatorToInt(percent_.denominator()))) {
     random_value = random_.random();
   }
 
   return runtime_.snapshot().featureEnabled(
       runtime_key_, percent_.numerator(), random_value,
-      ProtobufPercentHelper::fractionalPercentDenominatorToInt(percent_));
+      ProtobufPercentHelper::fractionalPercentDenominatorToInt(percent_.denominator()));
 }
 
 OperatorFilter::OperatorFilter(const Protobuf::RepeatedPtrField<
@@ -172,6 +179,24 @@ HeaderFilter::HeaderFilter(const envoy::config::filter::accesslog::v2::HeaderFil
 bool HeaderFilter::evaluate(const RequestInfo::RequestInfo&,
                             const Http::HeaderMap& request_headers) {
   return Http::HeaderUtility::matchHeaders(request_headers, header_data_);
+}
+
+ResponseFlagFilter::ResponseFlagFilter(
+    const envoy::config::filter::accesslog::v2::ResponseFlagFilter& config) {
+  for (int i = 0; i < config.flags_size(); i++) {
+    absl::optional<RequestInfo::ResponseFlag> response_flag =
+        RequestInfo::ResponseFlagUtils::toResponseFlag(config.flags(i));
+    // The config has been validated. Therefore, every flag in the config will have a mapping.
+    ASSERT(response_flag.has_value());
+    configured_flags_ |= response_flag.value();
+  }
+}
+
+bool ResponseFlagFilter::evaluate(const RequestInfo::RequestInfo& info, const Http::HeaderMap&) {
+  if (configured_flags_ != 0) {
+    return info.intersectResponseFlags(configured_flags_);
+  }
+  return info.hasAnyResponseFlag();
 }
 
 InstanceSharedPtr

@@ -8,6 +8,7 @@
 #include "envoy/http/codes.h"
 #include "envoy/http/filter.h"
 #include "envoy/http/header_map.h"
+#include "envoy/http/query_params.h"
 #include "envoy/network/listen_socket.h"
 #include "envoy/server/config_tracker.h"
 
@@ -36,7 +37,7 @@ public:
    * @return Http::StreamDecoderFilterCallbacks& to be used by the handler to get HTTP request data
    * for streaming.
    */
-  virtual const Http::StreamDecoderFilterCallbacks& getDecoderFilterCallbacks() const PURE;
+  virtual Http::StreamDecoderFilterCallbacks& getDecoderFilterCallbacks() const PURE;
 
   /**
    * @return Http::HeaderMap& to be used by handler to parse header information sent with the
@@ -44,6 +45,7 @@ public:
    */
   virtual const Http::HeaderMap& getRequestHeaders() const PURE;
 };
+
 /**
  * This macro is used to add handlers to the Admin HTTP Endpoint. It builds
  * a callback that executes X when the specified admin handler is hit. This macro can be
@@ -52,7 +54,7 @@ public:
  */
 #define MAKE_ADMIN_HANDLER(X)                                                                      \
   [this](absl::string_view path_and_query, Http::HeaderMap& response_headers,                      \
-         Buffer::Instance& data, AdminStream& admin_stream) -> Http::Code {                        \
+         Buffer::Instance& data, Server::AdminStream& admin_stream) -> Http::Code {                \
     return X(path_and_query, response_headers, data, admin_stream);                                \
   }
 
@@ -108,6 +110,37 @@ public:
    * @return ConfigTracker& tracker for /config_dump endpoint.
    */
   virtual ConfigTracker& getConfigTracker() PURE;
+
+  /**
+   * Expose this Admin console as an HTTP server.
+   * @param address_out_path file path to write the listening socket's address to.
+   * @param address network address to bind and listen on.
+   * @param listener_scope stats scope for the listener being started,
+   */
+  virtual void startHttpListener(const std::string& address_out_path,
+                                 Network::Address::InstanceConstSharedPtr address,
+                                 Stats::ScopePtr&& listener_scope) PURE;
+
+  /**
+   * Executes an admin request with the specified query params. Note: this must
+   * be called from Envoy's main thread.
+   *
+   * @param path_and_query the path and query of the admin URL.
+   * @param method the HTTP method (POST or GET).
+   * @param response_headers populated the the response headers from executing the request,
+   *     most notably content-type.
+   * @param body populated with the response-body from the admin request.
+   * @return Http::Code The HTTP response code from the admin request.
+   */
+  virtual Http::Code request(absl::string_view path_and_query, absl::string_view method,
+                             Http::HeaderMap& response_headers, std::string& body) PURE;
+
+  /**
+   * Add this Admin's listener to the provided handler, if the listener exists.
+   * Throws an exception if the listener does not exist.
+   * @param handler the handler that will receive this Admin's listener.
+   */
+  virtual void addListenerToHandler(Network::ConnectionHandler* handler) PURE;
 };
 
 } // namespace Server

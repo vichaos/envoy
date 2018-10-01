@@ -80,6 +80,7 @@ envoy_cc_library(
         "//include/envoy/stats:stats_interface",
         "//source/common/common:enum_to_int",
         "//source/common/common:utility_lib",
+        "@envoy_api//envoy/type:http_status_cc",
     ],
 )
 
@@ -109,9 +110,9 @@ envoy_cc_library(
         ":utility_lib",
         "//include/envoy/access_log:access_log_interface",
         "//include/envoy/buffer:buffer_interface",
+        "//include/envoy/common:time_interface",
         "//include/envoy/event:deferred_deletable",
         "//include/envoy/event:dispatcher_interface",
-        "//include/envoy/event:timer_interface",
         "//include/envoy/http:codec_interface",
         "//include/envoy/http:filter_interface",
         "//include/envoy/http:header_map_interface",
@@ -122,6 +123,7 @@ envoy_cc_library(
         "//include/envoy/network:filter_interface",
         "//include/envoy/router:rds_interface",
         "//include/envoy/runtime:runtime_interface",
+        "//include/envoy/server:overload_manager_interface",
         "//include/envoy/ssl:connection_interface",
         "//include/envoy/stats:stats_interface",
         "//include/envoy/stats:stats_macros",
@@ -214,6 +216,7 @@ envoy_cc_library(
         "//include/envoy/runtime:runtime_interface",
         "//include/envoy/upstream:cluster_manager_interface",
         "//source/common/common:enum_to_int",
+        "//source/common/config:utility_lib",
     ],
 )
 
@@ -243,6 +246,7 @@ envoy_cc_library(
         "//include/envoy/http:codes_interface",
         "//include/envoy/http:filter_interface",
         "//include/envoy/http:header_map_interface",
+        "//include/envoy/http:query_params_interface",
         "//source/common/buffer:buffer_lib",
         "//source/common/common:assert_lib",
         "//source/common/common:empty_string",

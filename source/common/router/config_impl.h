@@ -98,6 +98,7 @@ public:
 
   // Router::CorsPolicy
   const std::list<std::string>& allowOrigins() const override { return allow_origin_; };
+  const std::list<std::regex>& allowOriginRegexes() const override { return allow_origin_regex_; }
   const std::string& allowMethods() const override { return allow_methods_; };
   const std::string& allowHeaders() const override { return allow_headers_; };
   const std::string& exposeHeaders() const override { return expose_headers_; };
@@ -107,6 +108,7 @@ public:
 
 private:
   std::list<std::string> allow_origin_;
+  std::list<std::regex> allow_origin_regex_;
   std::string allow_methods_;
   std::string allow_headers_;
   std::string expose_headers_;
@@ -181,7 +183,9 @@ typedef std::shared_ptr<VirtualHostImpl> VirtualHostSharedPtr;
 /**
  * Implementation of RetryPolicy that reads from the proto route config.
  */
-class RetryPolicyImpl : public RetryPolicy {
+class RetryPolicyImpl : public RetryPolicy,
+                        Upstream::RetryHostPredicateFactoryCallbacks,
+                        Upstream::RetryPriorityFactoryCallbacks {
 public:
   RetryPolicyImpl(const envoy::api::v2::route::RouteAction& config);
 
@@ -189,11 +193,30 @@ public:
   std::chrono::milliseconds perTryTimeout() const override { return per_try_timeout_; }
   uint32_t numRetries() const override { return num_retries_; }
   uint32_t retryOn() const override { return retry_on_; }
+  std::vector<Upstream::RetryHostPredicateSharedPtr> retryHostPredicates() const override {
+    return retry_host_predicates_;
+  }
+  Upstream::RetryPrioritySharedPtr retryPriority() const override { return retry_priority_; }
+  uint32_t hostSelectionMaxAttempts() const override { return host_selection_attempts_; }
+
+  // Upstream::RetryHostPredicateFactoryCallbacks
+  void addHostPredicate(Upstream::RetryHostPredicateSharedPtr predicate) override {
+    retry_host_predicates_.emplace_back(predicate);
+  }
+
+  // Upstream::RetryHostPredicateFactoryCallbacks
+  void addRetryPriority(Upstream::RetryPrioritySharedPtr retry_priority) override {
+    ASSERT(!retry_priority_);
+    retry_priority_ = retry_priority;
+  }
 
 private:
   std::chrono::milliseconds per_try_timeout_{0};
   uint32_t num_retries_{};
   uint32_t retry_on_{};
+  std::vector<Upstream::RetryHostPredicateSharedPtr> retry_host_predicates_;
+  Upstream::RetryPrioritySharedPtr retry_priority_;
+  uint32_t host_selection_attempts_{1};
 };
 
 /**
@@ -232,6 +255,9 @@ public:
     virtual absl::optional<uint64_t> evaluate(const Network::Address::Instance* downstream_addr,
                                               const Http::HeaderMap& headers,
                                               const AddCookieCallback add_cookie) const PURE;
+
+    // If the method is a terminal method, ignore rest of the hash policy chain.
+    virtual bool terminal() const PURE;
   };
 
   typedef std::unique_ptr<HashMethod> HashMethodPtr;
@@ -265,7 +291,8 @@ class RouteEntryImplBase : public RouteEntry,
                            public DirectResponseEntry,
                            public Route,
                            public PathMatchCriterion,
-                           public std::enable_shared_from_this<RouteEntryImplBase> {
+                           public std::enable_shared_from_this<RouteEntryImplBase>,
+                           Logger::Loggable<Logger::Id::router> {
 public:
   /**
    * @throw EnvoyException with reason if the route configuration contains any errors
@@ -309,12 +336,13 @@ public:
     return vhost_.virtualClusterFromEntries(headers);
   }
   std::chrono::milliseconds timeout() const override { return timeout_; }
+  absl::optional<std::chrono::milliseconds> idleTimeout() const override { return idle_timeout_; }
   absl::optional<std::chrono::milliseconds> maxGrpcTimeout() const override {
     return max_grpc_timeout_;
   }
   const VirtualHost& virtualHost() const override { return vhost_; }
   bool autoHostRewrite() const override { return auto_host_rewrite_; }
-  bool useWebSocket() const override { return websocket_config_ != nullptr; }
+  bool useOldStyleWebSocket() const override { return websocket_config_ != nullptr; }
   Http::WebSocketProxyPtr
   createWebSocketProxy(Http::HeaderMap& request_headers, RequestInfo::RequestInfo& request_info,
                        Http::WebSocketProxyCallbacks& callbacks,
@@ -356,13 +384,11 @@ protected:
 
   void finalizePathHeader(Http::HeaderMap& headers, const std::string& matched_path,
                           bool insert_envoy_original_path) const;
-  const HeaderParser& requestHeaderParser() const { return *request_headers_parser_; };
-  const HeaderParser& responseHeaderParser() const { return *response_headers_parser_; };
 
 private:
   struct RuntimeData {
-    std::string key_{};
-    uint64_t default_{};
+    uint64_t numerator_val_{};
+    uint64_t denominator_val_{};
   };
 
   class DynamicRouteEntry : public RouteEntry, public Route {
@@ -393,6 +419,9 @@ private:
     const RetryPolicy& retryPolicy() const override { return parent_->retryPolicy(); }
     const ShadowPolicy& shadowPolicy() const override { return parent_->shadowPolicy(); }
     std::chrono::milliseconds timeout() const override { return parent_->timeout(); }
+    absl::optional<std::chrono::milliseconds> idleTimeout() const override {
+      return parent_->idleTimeout();
+    }
     absl::optional<std::chrono::milliseconds> maxGrpcTimeout() const override {
       return parent_->maxGrpcTimeout();
     }
@@ -410,7 +439,7 @@ private:
 
     const VirtualHost& virtualHost() const override { return parent_->virtualHost(); }
     bool autoHostRewrite() const override { return parent_->autoHostRewrite(); }
-    bool useWebSocket() const override { return parent_->useWebSocket(); }
+    bool useOldStyleWebSocket() const override { return parent_->useOldStyleWebSocket(); }
     Http::WebSocketProxyPtr
     createWebSocketProxy(Http::HeaderMap& request_headers, RequestInfo::RequestInfo& request_info,
                          Http::WebSocketProxyCallbacks& callbacks,
@@ -490,8 +519,7 @@ private:
 
   typedef std::shared_ptr<WeightedClusterEntry> WeightedClusterEntrySharedPtr;
 
-  static absl::optional<RuntimeData>
-  loadRuntimeData(const envoy::api::v2::route::RouteMatch& route);
+  absl::optional<RuntimeData> loadRuntimeData(const envoy::api::v2::route::RouteMatch& route);
 
   static std::multimap<std::string, std::string>
   parseOpaqueConfig(const envoy::api::v2::route::Route& route);
@@ -510,9 +538,10 @@ private:
   const Http::LowerCaseString cluster_header_name_;
   const Http::Code cluster_not_found_response_code_;
   const std::chrono::milliseconds timeout_;
+  const absl::optional<std::chrono::milliseconds> idle_timeout_;
   const absl::optional<std::chrono::milliseconds> max_grpc_timeout_;
-  const absl::optional<RuntimeData> runtime_;
   Runtime::Loader& loader_;
+  const absl::optional<RuntimeData> runtime_;
   const std::string host_redirect_;
   const std::string path_redirect_;
   const bool https_redirect_;
@@ -528,9 +557,12 @@ private:
   const uint64_t total_cluster_weight_;
   std::unique_ptr<const HashPolicyImpl> hash_policy_;
   MetadataMatchCriteriaConstPtr metadata_match_criteria_;
+  HeaderParserPtr route_action_request_headers_parser_;
+  HeaderParserPtr route_action_response_headers_parser_;
   HeaderParserPtr request_headers_parser_;
   HeaderParserPtr response_headers_parser_;
   envoy::api::v2::core::Metadata metadata_;
+  const bool match_grpc_;
 
   // TODO(danielhochman): refactor multimap into unordered_map since JSON is unordered map.
   const std::multimap<std::string, std::string> opaque_config_;
@@ -539,6 +571,7 @@ private:
   const absl::optional<Http::Code> direct_response_code_;
   std::string direct_response_body_;
   PerFilterConfigs per_filter_configs_;
+  Event::TimeSystem& time_system_;
 };
 
 /**

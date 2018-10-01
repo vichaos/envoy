@@ -9,11 +9,12 @@
 #include "envoy/network/connection.h"
 #include "envoy/network/filter.h"
 #include "envoy/runtime/runtime.h"
+#include "envoy/stats/scope.h"
 #include "envoy/stats/stats_macros.h"
 #include "envoy/upstream/cluster_manager.h"
 
 #include "extensions/filters/common/ext_authz/ext_authz.h"
-#include "extensions/filters/common/ext_authz/ext_authz_impl.h"
+#include "extensions/filters/common/ext_authz/ext_authz_grpc_impl.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -90,7 +91,7 @@ public:
   void onBelowWriteBufferLowWatermark() override {}
 
   // ExtAuthz::RequestCallbacks
-  void onComplete(Filters::Common::ExtAuthz::CheckStatus status) override;
+  void onComplete(Filters::Common::ExtAuthz::ResponsePtr&&) override;
 
 private:
   // State of this filter's communication with the external authorization service.
@@ -112,7 +113,7 @@ private:
   bool calling_check_{};
   envoy::service::auth::v2alpha::CheckRequest check_request_{};
 };
-}
+} // namespace ExtAuthz
 } // namespace NetworkFilters
 } // namespace Extensions
 } // namespace Envoy

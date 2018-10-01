@@ -13,6 +13,15 @@
 
 namespace Envoy {
 
+TEST(UtilityTest, convertPercentNaN) {
+  envoy::api::v2::Cluster::CommonLbConfig common_config_;
+  common_config_.mutable_healthy_panic_threshold()->set_value(
+      std::numeric_limits<double>::quiet_NaN());
+  EXPECT_THROW(PROTOBUF_PERCENT_TO_ROUNDED_INTEGER_OR_DEFAULT(common_config_,
+                                                              healthy_panic_threshold, 100, 50),
+               EnvoyException);
+}
+
 TEST(UtilityTest, RepeatedPtrUtilDebugString) {
   Protobuf::RepeatedPtrField<ProtobufWkt::UInt32Value> repeated;
   EXPECT_EQ("[]", RepeatedPtrUtil::debugString(repeated));
@@ -43,6 +52,17 @@ TEST(UtilityTest, LoadBinaryProtoFromFile) {
   envoy::config::bootstrap::v2::Bootstrap proto_from_file;
   MessageUtil::loadFromFile(filename, proto_from_file);
   EXPECT_TRUE(TestUtility::protoEqual(bootstrap, proto_from_file));
+}
+
+TEST(UtilityTest, LoadBinaryProtoUnknownFieldFromFile) {
+  ProtobufWkt::Duration source_duration;
+  source_duration.set_seconds(42);
+  const std::string filename =
+      TestEnvironment::writeStringToFileForTest("proto.pb", source_duration.SerializeAsString());
+  envoy::config::bootstrap::v2::Bootstrap proto_from_file;
+  EXPECT_THROW_WITH_MESSAGE(
+      MessageUtil::loadFromFile(filename, proto_from_file), EnvoyException,
+      "Protobuf message (type envoy.config.bootstrap.v2.Bootstrap) has unknown fields");
 }
 
 TEST(UtilityTest, LoadTextProtoFromFile) {
@@ -203,12 +223,39 @@ TEST(UtilityTest, HashedValueStdHash) {
   EXPECT_NE(set.find(hv3), set.end());
 }
 
+TEST(UtilityTest, AnyConvertWrongType) {
+  ProtobufWkt::Duration source_duration;
+  source_duration.set_seconds(42);
+  ProtobufWkt::Any source_any;
+  source_any.PackFrom(source_duration);
+  EXPECT_THROW_WITH_REGEX(MessageUtil::anyConvert<ProtobufWkt::Timestamp>(source_any),
+                          EnvoyException, "Unable to unpack .*");
+}
+
+TEST(UtilityTest, AnyConvertWrongFields) {
+  const ProtobufWkt::Struct obj = MessageUtil::keyValueStruct("test_key", "test_value");
+  ProtobufWkt::Any source_any;
+  source_any.PackFrom(obj);
+  source_any.set_type_url("type.google.com/google.protobuf.Timestamp");
+  EXPECT_THROW_WITH_MESSAGE(MessageUtil::anyConvert<ProtobufWkt::Timestamp>(source_any),
+                            EnvoyException,
+                            "Protobuf message (type google.protobuf.Timestamp) has unknown fields");
+}
+
 TEST(UtilityTest, JsonConvertSuccess) {
   ProtobufWkt::Duration source_duration;
   source_duration.set_seconds(42);
   ProtobufWkt::Duration dest_duration;
   MessageUtil::jsonConvert(source_duration, dest_duration);
   EXPECT_EQ(42, dest_duration.seconds());
+}
+
+TEST(UtilityTest, JsonConvertUnknownFieldSuccess) {
+  MessageUtil::proto_unknown_fields = ProtoUnknownFieldsMode::Allow;
+  const ProtobufWkt::Struct obj = MessageUtil::keyValueStruct("test_key", "test_value");
+  envoy::config::bootstrap::v2::Bootstrap bootstrap;
+  EXPECT_NO_THROW(MessageUtil::jsonConvert(obj, bootstrap));
+  MessageUtil::proto_unknown_fields = ProtoUnknownFieldsMode::Strict;
 }
 
 TEST(UtilityTest, JsonConvertFail) {
@@ -238,6 +285,25 @@ TEST(UtilityTest, JsonConvertCamelSnake) {
                        .string_value());
 }
 
+TEST(UtilityTest, YamlLoadFromStringFail) {
+  envoy::config::bootstrap::v2::Bootstrap bootstrap;
+  // Verify loadFromYaml can parse valid YAML string.
+  MessageUtil::loadFromYaml("node: { id: node1 }", bootstrap);
+  // Verify loadFromYaml throws error when the input is an invalid YAML string.
+  EXPECT_THROW_WITH_MESSAGE(
+      MessageUtil::loadFromYaml("not_a_yaml_that_can_be_converted_to_json", bootstrap),
+      EnvoyException, "Unable to convert YAML as JSON: not_a_yaml_that_can_be_converted_to_json");
+  // When wrongly inputted by a file path, loadFromYaml throws an error.
+  EXPECT_THROW_WITH_MESSAGE(MessageUtil::loadFromYaml("/home/configs/config.yaml", bootstrap),
+                            EnvoyException,
+                            "Unable to convert YAML as JSON: /home/configs/config.yaml");
+  // Verify loadFromYaml throws error when the input leads to an Array. This error message is
+  // arguably more useful than only "Unable to convert YAML as JSON".
+  EXPECT_THROW_WITH_REGEX(MessageUtil::loadFromYaml("- node: { id: node1 }", bootstrap),
+                          EnvoyException,
+                          "Unable to parse JSON as proto.*Root element must be a message.*");
+}
+
 TEST(DurationUtilTest, OutOfRange) {
   {
     ProtobufWkt::Duration duration;
@@ -260,5 +326,40 @@ TEST(DurationUtilTest, OutOfRange) {
     EXPECT_THROW(DurationUtil::durationToMilliseconds(duration), DurationUtil::OutOfRangeException);
   }
 }
+
+class TimestampUtilTest : public ::testing::Test, public ::testing::WithParamInterface<int64_t> {};
+
+TEST_P(TimestampUtilTest, SystemClockToTimestampTest) {
+  // Generate an input time_point<system_clock>,
+  std::chrono::time_point<std::chrono::system_clock> epoch_time;
+  auto time_original = epoch_time + std::chrono::milliseconds(GetParam());
+
+  // And convert that to Timestamp.
+  ProtobufWkt::Timestamp timestamp;
+  TimestampUtil::systemClockToTimestamp(time_original, timestamp);
+
+  // Then convert that Timestamp back into a time_point<system_clock>,
+  std::chrono::time_point<std::chrono::system_clock> time_reflected =
+      epoch_time +
+      std::chrono::milliseconds(Protobuf::util::TimeUtil::TimestampToMilliseconds(timestamp));
+
+  EXPECT_EQ(time_original, time_reflected);
+}
+
+INSTANTIATE_TEST_CASE_P(TimestampUtilTestAcrossRange, TimestampUtilTest,
+                        ::testing::Values(-1000 * 60 * 60 * 24 * 7, // week
+                                          -1000 * 60 * 60 * 24,     // day
+                                          -1000 * 60 * 60,          // hour
+                                          -1000 * 60,               // minute
+                                          -1000,                    // second
+                                          -1,                       // millisecond
+                                          0,
+                                          1,                      // millisecond
+                                          1000,                   // second
+                                          1000 * 60,              // minute
+                                          1000 * 60 * 60,         // hour
+                                          1000 * 60 * 60 * 24,    // day
+                                          1000 * 60 * 60 * 24 * 7 // week
+                                          ));
 
 } // namespace Envoy

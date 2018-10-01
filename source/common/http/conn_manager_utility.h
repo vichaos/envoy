@@ -28,15 +28,21 @@ public:
    *         existence of the x-forwarded-for header. Again see the method for more details.
    */
   static Network::Address::InstanceConstSharedPtr
-  mutateRequestHeaders(Http::HeaderMap& request_headers, Protocol protocol,
-                       Network::Connection& connection, ConnectionManagerConfig& config,
-                       const Router::Config& route_config, Runtime::RandomGenerator& random,
-                       Runtime::Loader& runtime, const LocalInfo::LocalInfo& local_info);
+  mutateRequestHeaders(Http::HeaderMap& request_headers, Network::Connection& connection,
+                       ConnectionManagerConfig& config, const Router::Config& route_config,
+                       Runtime::RandomGenerator& random, Runtime::Loader& runtime,
+                       const LocalInfo::LocalInfo& local_info);
 
   static void mutateResponseHeaders(Http::HeaderMap& response_headers,
-                                    const Http::HeaderMap& request_headers, const std::string& via);
+                                    const Http::HeaderMap* request_headers, const std::string& via);
 
 private:
+  /**
+   * Mutate request headers if request needs to be traced.
+   */
+  static void mutateTracingRequestHeader(Http::HeaderMap& request_headers, Runtime::Loader& runtime,
+                                         ConnectionManagerConfig& config);
+
   static void mutateXfccRequestHeader(Http::HeaderMap& request_headers,
                                       Network::Connection& connection,
                                       ConnectionManagerConfig& config);

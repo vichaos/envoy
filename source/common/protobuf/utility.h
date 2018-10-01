@@ -48,6 +48,16 @@
   ((message).has_##field_name() ? DurationUtil::durationToSeconds((message).field_name())          \
                                 : throw MissingFieldException(#field_name, (message)))
 
+// Set the value of a FractionalPercent field with the value from a protobuf message if present.
+// Otherwise, convert the default field value into FractionalPercent and set it.
+#define PROTOBUF_SET_FRACTIONAL_PERCENT_OR_DEFAULT(field, message, field_name, default_field_name) \
+  if ((message).has_##field_name()) {                                                              \
+    field = (message).field_name();                                                                \
+  } else {                                                                                         \
+    field.set_numerator((message).default_field_name());                                           \
+    field.set_denominator(envoy::type::FractionalPercent::HUNDRED);                                \
+  }
+
 namespace Envoy {
 namespace ProtobufPercentHelper {
 
@@ -58,10 +68,11 @@ uint64_t convertPercent(double percent, uint64_t max_value);
 
 /**
  * Convert a fractional percent denominator enum into an integer.
- * @param percent supplies percent to convert.
+ * @param denominator supplies denominator to convert.
  * @return the converted denominator.
  */
-uint64_t fractionalPercentDenominatorToInt(const envoy::type::FractionalPercent& percent);
+uint64_t fractionalPercentDenominatorToInt(
+    const envoy::type::FractionalPercent::DenominatorType& denominator);
 
 } // namespace ProtobufPercentHelper
 } // namespace Envoy
@@ -71,11 +82,16 @@ uint64_t fractionalPercentDenominatorToInt(const envoy::type::FractionalPercent&
 // @param field_name supplies the field name in the message.
 // @param max_value supplies the maximum allowed integral value (e.g., 100, 10000, etc.).
 // @param default_value supplies the default if the field is not present.
+//
+// TODO(anirudhmurali): Recommended to capture and validate NaN values in PGV
+// Issue: https://github.com/lyft/protoc-gen-validate/issues/85
 #define PROTOBUF_PERCENT_TO_ROUNDED_INTEGER_OR_DEFAULT(message, field_name, max_value,             \
                                                        default_value)                              \
-  ((message).has_##field_name()                                                                    \
-       ? ProtobufPercentHelper::convertPercent((message).field_name().value(), max_value)          \
-       : ProtobufPercentHelper::checkAndReturnDefault(default_value, max_value))
+  (!std::isnan((message).field_name().value())                                                     \
+       ? (message).has_##field_name()                                                              \
+             ? ProtobufPercentHelper::convertPercent((message).field_name().value(), max_value)    \
+             : ProtobufPercentHelper::checkAndReturnDefault(default_value, max_value)              \
+       : throw EnvoyException(fmt::format("Value not in the range of 0..100 range.")))
 
 namespace Envoy {
 
@@ -128,6 +144,8 @@ public:
   ProtoValidationException(const std::string& validation_error, const Protobuf::Message& message);
 };
 
+enum class ProtoUnknownFieldsMode { Strict, Allow };
+
 class MessageUtil {
 public:
   // std::hash
@@ -153,7 +171,19 @@ public:
     return HashUtil::xxHash64(text);
   }
 
+  static ProtoUnknownFieldsMode proto_unknown_fields;
+
+  static void checkUnknownFields(const Protobuf::Message& message) {
+    if (MessageUtil::proto_unknown_fields == ProtoUnknownFieldsMode::Strict &&
+        !message.GetReflection()->GetUnknownFields(message).empty()) {
+      throw EnvoyException("Protobuf message (type " + message.GetTypeName() +
+                           ") has unknown fields");
+    }
+  }
+
   static void loadFromJson(const std::string& json, Protobuf::Message& message);
+  static void loadFromJsonEx(const std::string& json, Protobuf::Message& message,
+                             ProtoUnknownFieldsMode proto_unknown_fields);
   static void loadFromYaml(const std::string& yaml, Protobuf::Message& message);
   static void loadFromFile(const std::string& path, Protobuf::Message& message);
 
@@ -209,6 +239,7 @@ public:
     if (!message.UnpackTo(&typed_message)) {
       throw EnvoyException("Unable to unpack " + message.DebugString());
     }
+    checkUnknownFields(typed_message);
     return typed_message;
   };
 
@@ -226,10 +257,13 @@ public:
    * Extract JSON as string from a google.protobuf.Message.
    * @param message message of type type.googleapis.com/google.protobuf.Message.
    * @param pretty_print whether the returned JSON should be formatted.
+   * @param always_print_primitive_fields whether to include primitive fields set to their default
+   * values, e.g. an int32 set to 0 or a bool set to false.
    * @return std::string of formatted JSON object.
    */
   static std::string getJsonStringFromMessage(const Protobuf::Message& message,
-                                              bool pretty_print = false);
+                                              bool pretty_print = false,
+                                              bool always_print_primitive_fields = false);
 
   /**
    * Extract JSON object from a google.protobuf.Message.
@@ -310,6 +344,17 @@ public:
    * @throw OutOfRangeException when duration is out-of-range.
    */
   static uint64_t durationToSeconds(const ProtobufWkt::Duration& duration);
+};
+
+class TimestampUtil {
+public:
+  /**
+   * Writes a time_point<system_clock> (SystemTime) to a protobuf Timestamp, by way of time_t.
+   * @param system_clock_time the time to write
+   * @param timestamp a pointer to the mutable protobuf member to be written into.
+   */
+  static void systemClockToTimestamp(const SystemTime system_clock_time,
+                                     ProtobufWkt::Timestamp& timestamp);
 };
 
 } // namespace Envoy

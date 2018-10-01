@@ -3,9 +3,11 @@
 #include "envoy/config/bootstrap/v2/bootstrap.pb.h"
 #include "envoy/config/bootstrap/v2/bootstrap.pb.validate.h"
 
+#include "common/common/utility.h"
 #include "common/common/version.h"
 #include "common/config/bootstrap_json.h"
 #include "common/config/utility.h"
+#include "common/event/real_time_system.h"
 #include "common/local_info/local_info_impl.h"
 #include "common/protobuf/utility.h"
 #include "common/singleton/manager_impl.h"
@@ -21,7 +23,8 @@ bool validateConfig(Options& options, Network::Address::InstanceConstSharedPtr l
   Stats::IsolatedStoreImpl stats_store;
 
   try {
-    ValidationInstance server(options, local_address, stats_store, access_log_lock,
+    Event::RealTimeSystem time_system;
+    ValidationInstance server(options, time_system, local_address, stats_store, access_log_lock,
                               component_factory);
     std::cout << "configuration '" << options.configPath() << "' OK" << std::endl;
     server.shutdown();
@@ -31,16 +34,17 @@ bool validateConfig(Options& options, Network::Address::InstanceConstSharedPtr l
   }
 }
 
-ValidationInstance::ValidationInstance(Options& options,
+ValidationInstance::ValidationInstance(Options& options, Event::TimeSystem& time_system,
                                        Network::Address::InstanceConstSharedPtr local_address,
                                        Stats::IsolatedStoreImpl& store,
                                        Thread::BasicLockable& access_log_lock,
                                        ComponentFactory& component_factory)
-    : options_(options), stats_store_(store),
+    : options_(options), time_system_(time_system), stats_store_(store),
       api_(new Api::ValidationImpl(options.fileFlushIntervalMsec())),
-      dispatcher_(api_->allocateDispatcher()), singleton_manager_(new Singleton::ManagerImpl()),
+      dispatcher_(api_->allocateDispatcher(time_system)),
+      singleton_manager_(new Singleton::ManagerImpl()),
       access_log_manager_(*api_, *dispatcher_, access_log_lock, store),
-      listener_manager_(*this, *this, *this) {
+      listener_manager_(*this, *this, *this, time_system_) {
   try {
     initialize(options, local_address, component_factory);
   } catch (const EnvoyException& e) {

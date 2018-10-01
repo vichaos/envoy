@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package envoy.api.v2.core;
 
+import "envoy/api/v2/core/base.proto";
+
 import "google/protobuf/wrappers.proto";
 
 import "validate/validate.proto";
@@ -34,7 +36,7 @@ message SocketAddress {
   // in :ref:`FilterChainMatch <envoy_api_msg_listener.FilterChainMatch>`.] When used
   // within an upstream :ref:`BindConfig <envoy_api_msg_core.BindConfig>`, the address
   // controls the source address of outbound connections. For :ref:`clusters
-  // <config_cluster_manager_cluster>`, the cluster type determines whether the
+  // <envoy_api_msg_Cluster>`, the cluster type determines whether the
   // address must be an IP (*STATIC* or *EDS* clusters) or a hostname resolved by DNS
   // (*STRICT_DNS* or *LOGICAL_DNS* clusters). Address resolution can be customized
   // via :ref:`resolver_name <envoy_api_field_core.SocketAddress.resolver_name>`.
@@ -87,6 +89,10 @@ message BindConfig {
   // flag is not set (default), the socket is not modified, i.e. the option is
   // neither enabled nor disabled.
   google.protobuf.BoolValue freebind = 2;
+
+  // Additional socket options that may not be present in Envoy source code or
+  // precompiled binaries.
+  repeated SocketOption socket_options = 3;
 }
 
 // Addresses specify either a logical or physical address and port, which are
