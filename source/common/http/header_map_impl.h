@@ -8,6 +8,7 @@
 
 #include "envoy/http/header_map.h"
 
+#include "common/common/logger.h"
 #include "common/common/non_copyable.h"
 #include "common/http/headers.h"
 
@@ -35,7 +36,7 @@ public:                                                                         
  * paths use O(1) direct access. In general, we try to copy as little as possible and allocate as
  * little as possible in any of the paths.
  */
-class HeaderMapImpl : public HeaderMap {
+class HeaderMapImpl : public HeaderMap, Logger::Loggable<Logger::Id::config> {
 public:
   /**
    * Appends data to header. If header already has a value, the string ',' is added between the
