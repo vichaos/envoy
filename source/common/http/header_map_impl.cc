@@ -327,7 +327,7 @@ void HeaderMapImpl::insertByKey(HeaderString&& key, HeaderString&& value) {
     if (*ref_lookup_response.entry_ == nullptr) { 
       maybeCreateInline(ref_lookup_response.entry_, *ref_lookup_response.key_, std::move(value));  
     } else {
-      ENVOY_LOG(error, "APPEND_ERROR: insertByKey cannot append inline headers. Failed to insert key {}", ref_lookup_response.key_->get());
+      ENVOY_LOG(error, "insertByKey cannot append inline headers. Failed to insert key {}", ref_lookup_response.key_->get());
     }
   } else {
     std::list<HeaderEntryImpl>::iterator i = headers_.insert(std::move(key), std::move(value));
@@ -367,7 +367,11 @@ void HeaderMapImpl::addReferenceKey(const LowerCaseString& key, const std::strin
   HeaderString new_value;
   new_value.setCopy(value.c_str(), value.size());
   insertByKey(std::move(ref_key), std::move(new_value));
-  ASSERT(new_value.empty());
+  if (!new_value.empty()) {
+    insertByKey(std::move(ref_key), std::move(new_value));
+  } else {
+    ENVOY_LOG(error, "addReferenceKey attempted to add an empty value");
+  }
 }
 
 void HeaderMapImpl::addCopy(const LowerCaseString& key, uint64_t value) {
