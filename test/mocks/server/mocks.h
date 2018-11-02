@@ -120,9 +120,10 @@ public:
   MOCK_METHOD1(removeHandler, bool(const std::string& prefix));
   MOCK_METHOD0(socket, Network::Socket&());
   MOCK_METHOD0(getConfigTracker, ConfigTracker&());
-  MOCK_METHOD3(startHttpListener, void(const std::string& address_out_path,
-                                       Network::Address::InstanceConstSharedPtr address,
-                                       Stats::ScopePtr&& listener_scope));
+  MOCK_METHOD4(startHttpListener,
+               void(const std::string& access_log_path, const std::string& address_out_path,
+                    Network::Address::InstanceConstSharedPtr address,
+                    Stats::ScopePtr&& listener_scope));
   MOCK_METHOD4(request, Http::Code(absl::string_view path_and_query, absl::string_view method,
                                    Http::HeaderMap& response_headers, std::string& body));
   MOCK_METHOD1(addListenerToHandler, void(Network::ConnectionHandler* handler));
@@ -244,7 +245,7 @@ public:
   ~MockWorkerFactory();
 
   // Server::WorkerFactory
-  WorkerPtr createWorker() override { return WorkerPtr{createWorker_()}; }
+  WorkerPtr createWorker(OverloadManager&) override { return WorkerPtr{createWorker_()}; }
 
   MOCK_METHOD0(createWorker_, Worker*());
 };
@@ -328,6 +329,7 @@ public:
   MOCK_METHOD0(rateLimitClient_, RateLimit::Client*());
   MOCK_METHOD0(runtime, Runtime::Loader&());
   MOCK_METHOD0(shutdown, void());
+  MOCK_METHOD0(isShutdown, bool());
   MOCK_METHOD0(shutdownAdmin, void());
   MOCK_METHOD0(singletonManager, Singleton::Manager&());
   MOCK_METHOD0(startTimeCurrentEpoch, time_t());
