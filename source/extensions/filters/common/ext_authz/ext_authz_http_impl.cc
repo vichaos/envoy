@@ -64,8 +64,16 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               Tracing::Span&) {
   ASSERT(callbacks_ == nullptr);
   callbacks_ = &callbacks;
+  
+  Http::HeaderMapPtr headers_ptr{}; 
+  const uint64_t request_length = request.attributes().request().http().body().inline_bytes().length();
+  if (request_length > 0) {
+    const Http::HeaderMap& header_map = Http::HeaderMapImpl{{Http::Headers::get().ContentLength, std::to_string(request_length)}};
+    headers_ptr = std::make_unique<Http::HeaderMapImpl>(header_map);  
+  } else {
+    headers_ptr = std::make_unique<Http::HeaderMapImpl>(getZeroContentLengthHeader());   
+  }
 
-  Http::HeaderMapPtr headers = std::make_unique<Http::HeaderMapImpl>(getZeroContentLengthHeader());
   for (const auto& allowed_header : allowed_request_headers_) {
     const auto& request_header =
         request.attributes().request().http().headers().find(allowed_header.get());
@@ -73,20 +81,23 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
       if (allowed_header == Http::Headers::get().Path && !path_prefix_.empty()) {
         std::string value;
         absl::StrAppend(&value, path_prefix_, request_header->second);
-        headers->addCopy(allowed_header, value);
+        headers_ptr->addCopy(allowed_header, value);
       } else {
-        headers->addCopy(allowed_header, request_header->second);
+        headers_ptr->addCopy(allowed_header, request_header->second);
       }
     }
   }
 
   for (const auto& kv : authorization_headers_to_add_) {
-    headers->setReference(kv.first, kv.second);
+    headers_ptr->setReference(kv.first, kv.second);
   }
 
-  request_ = cm_.httpAsyncClientForCluster(cluster_name_)
-                 .send(std::make_unique<Envoy::Http::RequestMessageImpl>(std::move(headers)), *this,
-                       timeout_);
+  Http::MessagePtr message_ptr = std::make_unique<Envoy::Http::RequestMessageImpl>(std::move(headers_ptr));
+  if (request_length > 0) {
+    message_ptr->body() = std::make_unique<Buffer::OwnedImpl>(request.attributes().request().http().body().inline_bytes());
+  }
+  
+  request_ = cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
 }
 
 ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {

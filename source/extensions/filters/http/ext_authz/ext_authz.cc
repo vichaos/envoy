@@ -53,8 +53,10 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   if (maybe_merged_per_route_config) {
     context_extensions = maybe_merged_per_route_config.value().takeContextExtensions();
   }
+
+  // send callback data here
   Filters::Common::ExtAuthz::CheckRequestUtils::createHttpCheck(
-      callbacks_, headers, std::move(context_extensions), check_request_);
+      callbacks_, headers, std::move(context_extensions), check_request_, config_->sendRequestData());
 
   state_ = State::Calling;
   // Don't let the filter chain continue as we are going to invoke check call.
@@ -65,18 +67,29 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   initiating_call_ = false;
 }
 
-Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) {
+Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
   request_headers_ = &headers;
-  initiateCall(headers);
+  if (!config_->sendRequestData() || end_stream) {
+    initiateCall(headers);
+  } else {
+    return Http::FilterHeadersStatus::StopIteration;
+  }
+
   return filter_return_ == FilterReturn::StopDecoding ? Http::FilterHeadersStatus::StopIteration
                                                       : Http::FilterHeadersStatus::Continue;
 }
 
-Http::FilterDataStatus Filter::decodeData(Buffer::Instance&, bool) {
+Http::FilterDataStatus Filter::decodeData(Buffer::Instance&, bool end_stream) {
+  if (config_->sendRequestData() && end_stream) {
+    initiateCall(*request_headers_);
+  } else{
+    return Http::FilterDataStatus::StopIterationAndBuffer;
+  }
+
   return filter_return_ == FilterReturn::StopDecoding
-             ? Http::FilterDataStatus::StopIterationAndWatermark
-             : Http::FilterDataStatus::Continue;
-}
+           ? Http::FilterDataStatus::StopIterationAndWatermark
+           : Http::FilterDataStatus::Continue;
+} // namespace ExtAuthz
 
 Http::FilterTrailersStatus Filter::decodeTrailers(Http::HeaderMap&) {
   return filter_return_ == FilterReturn::StopDecoding ? Http::FilterTrailersStatus::StopIteration
@@ -180,7 +193,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
   }
 }
 
-} // namespace ExtAuthz
 } // namespace HttpFilters
 } // namespace Extensions
+} // namespace Envoy
 } // namespace Envoy

@@ -62,7 +62,7 @@ TEST_F(CheckRequestUtilsTest, BasicHttp) {
   EXPECT_CALL(req_info_, protocol()).Times(2).WillRepeatedly(ReturnPointee(&protocol_));
   Protobuf::Map<ProtobufTypes::String, ProtobufTypes::String> empty;
 
-  CheckRequestUtils::createHttpCheck(&callbacks_, headers, std::move(empty), request);
+  CheckRequestUtils::createHttpCheck(&callbacks_, headers, std::move(empty), request, false);
 }
 
 // Verify that createHttpCheck extract the proper attributes from the http request into CheckRequest
@@ -85,7 +85,7 @@ TEST_F(CheckRequestUtilsTest, CheckAttrContextPeer) {
   context_extensions["key"] = "value";
 
   CheckRequestUtils::createHttpCheck(&callbacks_, request_headers, std::move(context_extensions),
-                                     request);
+                                     request, false);
 
   EXPECT_EQ("source", request.attributes().source().principal());
   EXPECT_EQ("destination", request.attributes().destination().principal());

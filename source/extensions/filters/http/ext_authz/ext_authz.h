@@ -44,6 +44,7 @@ public:
             toAuthorizationHeaders(config.http_service().allowed_authorization_headers())),
         allowed_request_headers_(toRequestHeaders(config.http_service().allowed_request_headers())),
         failure_mode_allow_(config.failure_mode_allow()),
+        send_request_data_(config.send_request_data()),
         authorization_headers_to_add_(
             toAuthorizationHeadersToAdd(config.http_service().authorization_headers_to_add())) {}
 
@@ -58,6 +59,8 @@ public:
   const Http::LowerCaseStrUnorderedSet& allowedRequestHeaders() { return allowed_request_headers_; }
 
   bool failureModeAllow() const { return failure_mode_allow_; }
+
+  bool sendRequestData() const { return send_request_data_; }
 
   const Filters::Common::ExtAuthz::HeaderKeyValueVector& authorizationHeadersToAdd() const {
     return authorization_headers_to_add_;
@@ -106,6 +109,7 @@ private:
   Http::LowerCaseStrUnorderedSet allowed_authorization_headers_;
   Http::LowerCaseStrUnorderedSet allowed_request_headers_;
   bool failure_mode_allow_;
+  bool send_request_data_;
   const Filters::Common::ExtAuthz::HeaderKeyValueVector authorization_headers_to_add_;
 };
 

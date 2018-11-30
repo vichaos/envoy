@@ -6,6 +6,8 @@
 #include "extensions/filters/network/common/factory_base.h"
 #include "extensions/filters/network/well_known_names.h"
 
+#include "absl/types/optional.h"
+
 namespace Envoy {
 namespace Extensions {
 namespace NetworkFilters {

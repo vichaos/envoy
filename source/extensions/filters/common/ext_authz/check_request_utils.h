@@ -43,13 +43,13 @@ public:
    * @param headers supplies the header map with http headers that will be used to create the
    *        check request.
    * @param request is the reference to the check request that will be filled up.
-   *
+   * @param send_data when true will set the request body in check request object.
    */
   static void
   createHttpCheck(const Envoy::Http::StreamDecoderFilterCallbacks* callbacks,
                   const Envoy::Http::HeaderMap& headers,
                   Protobuf::Map<ProtobufTypes::String, ProtobufTypes::String>&& context_extensions,
-                  envoy::service::auth::v2alpha::CheckRequest& request);
+                  envoy::service::auth::v2alpha::CheckRequest& request, bool send_data);
 
   /**
    * createTcpCheck is used to extract the attributes from the network layer and fill them up
@@ -67,10 +67,10 @@ private:
                                  const bool local);
   static void setHttpRequest(::envoy::service::auth::v2alpha::AttributeContext_HttpRequest& httpreq,
                              const Envoy::Http::StreamDecoderFilterCallbacks* callbacks,
-                             const Envoy::Http::HeaderMap& headers);
+                             const Envoy::Http::HeaderMap& headers, bool send_data);
   static void setAttrContextRequest(::envoy::service::auth::v2alpha::AttributeContext_Request& req,
                                     const Envoy::Http::StreamDecoderFilterCallbacks* callbacks,
-                                    const Envoy::Http::HeaderMap& headers);
+                                    const Envoy::Http::HeaderMap& headers, bool send_data);
   static std::string getHeaderStr(const Envoy::Http::HeaderEntry* entry);
   static Envoy::Http::HeaderMap::Iterate fillHttpHeaders(const Envoy::Http::HeaderEntry&, void*);
 };

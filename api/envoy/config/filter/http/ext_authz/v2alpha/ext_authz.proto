@@ -38,6 +38,11 @@ message ExtAuthz {
   // an error occurs during the authorization process.
   // Defaults to false.
   bool failure_mode_allow = 2;
+
+  // When this field is true, the filter will buffer the request body and sent it over the
+  // authorization server. It is strongly recomended to set :ref:`Buffer
+  // <config_http_filters_buffer>` as the first in the HTTP filter chain if this feature is enabled.
+  bool send_request_data = 4;
 }
 
 // External Authorization filter calls out to an upstream authorization server by passing the raw
