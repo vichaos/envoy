@@ -97,7 +97,10 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
     message_ptr->body() = std::make_unique<Buffer::OwnedImpl>(request.attributes().request().http().body().inline_bytes());
   }
   
-  request_ = cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
+  // request_ = cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
+  request_ = cm_.httpAsyncClientForCluster(cluster_name_)
+                 .send(std::move(message_ptr), *this,
+                       Http::AsyncClient::RequestOptions().setTimeout(timeout_));
 }
 
 ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {
