@@ -7,6 +7,8 @@
 
 #include "extensions/filters/http/well_known_names.h"
 
+#include "absl/strings/match.h"
+
 namespace Envoy {
 namespace Extensions {
 namespace HttpFilters {
@@ -67,29 +69,38 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   initiating_call_ = false;
 }
 
-Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
+Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) {
   request_headers_ = &headers;
-  if (!config_->sendRequestData() || end_stream) {
-    initiateCall(headers);
-  } else {
-    return Http::FilterHeadersStatus::StopIteration;
+  
+  if (config_->sendRequestData()) {
+    const Http::HeaderEntry* upgrade = headers.Upgrade();
+    if (upgrade == nullptr || !absl::EqualsIgnoreCase(upgrade->value().getStringView(),
+                                              Http::Headers::get().UpgradeValues.WebSocket)) {   
+      ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
+      send_decode_data_ = true;
+      return Http::FilterHeadersStatus::StopIteration;
+    }
   }
 
+  initiateCall(headers);
   return filter_return_ == FilterReturn::StopDecoding ? Http::FilterHeadersStatus::StopIteration
-                                                      : Http::FilterHeadersStatus::Continue;
+                                                      : Http::FilterHeadersStatus::Continue;                                                      
 }
 
 Http::FilterDataStatus Filter::decodeData(Buffer::Instance&, bool end_stream) {
-  if (config_->sendRequestData() && end_stream) {
+  if (send_decode_data_) {
+    if (!end_stream) {
+      ENVOY_STREAM_LOG(debug, "ext_authz stoping and buffering", *callbacks_);
+      return Http::FilterDataStatus::StopIterationAndBuffer;
+    }
+    ENVOY_STREAM_LOG(debug, "ext_authz initiating call after buffering", *callbacks_);
     initiateCall(*request_headers_);
-  } else{
-    return Http::FilterDataStatus::StopIterationAndBuffer;
   }
 
   return filter_return_ == FilterReturn::StopDecoding
            ? Http::FilterDataStatus::StopIterationAndWatermark
            : Http::FilterDataStatus::Continue;
-} // namespace ExtAuthz
+}
 
 Http::FilterTrailersStatus Filter::decodeTrailers(Http::HeaderMap&) {
   return filter_return_ == FilterReturn::StopDecoding ? Http::FilterTrailersStatus::StopIteration
