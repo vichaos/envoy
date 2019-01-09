@@ -1,3 +1,0 @@
-FROM frolvlad/alpine-glibc
-
-ADD envoy-static-binary /usr/local/bin/envoy
