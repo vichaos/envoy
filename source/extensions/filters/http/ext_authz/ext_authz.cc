@@ -69,17 +69,13 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   initiating_call_ = false;
 }
 
-Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) {
+Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
   request_headers_ = &headers;
-  
-  if (config_->sendRequestData()) {
-    const Http::HeaderEntry* upgrade = headers.Upgrade();
-    if (upgrade == nullptr || !absl::EqualsIgnoreCase(upgrade->value().getStringView(),
-                                              Http::Headers::get().UpgradeValues.WebSocket)) {   
+  const bool is_websocket = (headers.Upgrade() != nullptr && absl::EqualsIgnoreCase(headers.Upgrade()->value().getStringView(), Http::Headers::get().UpgradeValues.WebSocket);
+  if (config_->sendRequestData() == true && end_stream == false && is_websocket == false)) { 
       ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
       send_decode_data_ = true;
       return Http::FilterHeadersStatus::StopIteration;
-    }
   }
 
   initiateCall(headers);
