@@ -64,14 +64,16 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               Tracing::Span&) {
   ASSERT(callbacks_ == nullptr);
   callbacks_ = &callbacks;
-  
-  Http::HeaderMapPtr headers_ptr{}; 
-  const uint64_t request_length = request.attributes().request().http().body().inline_bytes().length();
+
+  Http::HeaderMapPtr headers_ptr{};
+  const uint64_t request_length =
+      request.attributes().request().http().body().inline_bytes().length();
   if (request_length > 0) {
-    const Http::HeaderMap& header_map = Http::HeaderMapImpl{{Http::Headers::get().ContentLength, std::to_string(request_length)}};
-    headers_ptr = std::make_unique<Http::HeaderMapImpl>(header_map);  
+    const Http::HeaderMap& header_map =
+        Http::HeaderMapImpl{{Http::Headers::get().ContentLength, std::to_string(request_length)}};
+    headers_ptr = std::make_unique<Http::HeaderMapImpl>(header_map);
   } else {
-    headers_ptr = std::make_unique<Http::HeaderMapImpl>(getZeroContentLengthHeader());   
+    headers_ptr = std::make_unique<Http::HeaderMapImpl>(getZeroContentLengthHeader());
   }
 
   for (const auto& allowed_header : allowed_request_headers_) {
@@ -92,12 +94,15 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
     headers_ptr->setReference(kv.first, kv.second);
   }
 
-  Http::MessagePtr message_ptr = std::make_unique<Envoy::Http::RequestMessageImpl>(std::move(headers_ptr));
+  Http::MessagePtr message_ptr =
+      std::make_unique<Envoy::Http::RequestMessageImpl>(std::move(headers_ptr));
   if (request_length > 0) {
-    message_ptr->body() = std::make_unique<Buffer::OwnedImpl>(request.attributes().request().http().body().inline_bytes());
+    message_ptr->body() = std::make_unique<Buffer::OwnedImpl>(
+        request.attributes().request().http().body().inline_bytes());
   }
-  
-  request_ = cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
+
+  request_ =
+      cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
 }
 
 ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {

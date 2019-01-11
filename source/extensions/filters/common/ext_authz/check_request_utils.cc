@@ -10,6 +10,7 @@
 #include "common/buffer/buffer_impl.h"
 #include "common/common/assert.h"
 #include "common/common/enum_to_int.h"
+#include "common/common/stack_array.h"
 #include "common/grpc/async_client_impl.h"
 #include "common/http/codes.h"
 #include "common/http/headers.h"
@@ -18,8 +19,6 @@
 #include "common/protobuf/protobuf.h"
 
 #include "absl/strings/str_cat.h"
-
-#include "common/common/stack_array.h"
 
 namespace Envoy {
 namespace Extensions {

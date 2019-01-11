@@ -163,6 +163,7 @@ public:
     const std::string Head{"HEAD"};
     const std::string Post{"POST"};
     const std::string Options{"OPTIONS"};
+    const std::string Trace{"TRACE"};
   } MethodValues;
 
   struct {

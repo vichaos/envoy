@@ -14,6 +14,28 @@ namespace Extensions {
 namespace HttpFilters {
 namespace ExtAuthz {
 
+namespace {
+
+// Default map of request methods that do not include body for fast looking up.
+const std::vector<std::string>& emptyBodyMethods() {
+  CONSTRUCT_ON_FIRST_USE(std::vector<std::string>, {Http::Headers::get().MethodValues.Get,
+                                                    Http::Headers::get().MethodValues.Connect,
+                                                    Http::Headers::get().MethodValues.Head,
+                                                    Http::Headers::get().MethodValues.Options,
+                                                    Http::Headers::get().MethodValues.Trace});
+}
+
+// TODO(gsagula): change this lookup from linear to constant using string view.
+bool isEmptyBodyMethod(absl::string_view input) {
+  for (const auto& method : emptyBodyMethods()) {
+    if (input == method) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
 void FilterConfigPerRoute::merge(const FilterConfigPerRoute& other) {
   disabled_ = other.disabled_;
   auto begin_it = other.context_extensions_.begin();
@@ -58,7 +80,8 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
 
   // send callback data here
   Filters::Common::ExtAuthz::CheckRequestUtils::createHttpCheck(
-      callbacks_, headers, std::move(context_extensions), check_request_, config_->sendRequestData());
+      callbacks_, headers, std::move(context_extensions), check_request_,
+      config_->sendRequestData());
 
   state_ = State::Calling;
   // Don't let the filter chain continue as we are going to invoke check call.
@@ -69,33 +92,33 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   initiating_call_ = false;
 }
 
-Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
+Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) {
   request_headers_ = &headers;
-  const bool is_websocket = (headers.Upgrade() != nullptr && absl::EqualsIgnoreCase(headers.Upgrade()->value().getStringView(), Http::Headers::get().UpgradeValues.WebSocket);
-  if (config_->sendRequestData() == true && end_stream == false && is_websocket == false)) { 
-      ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
-      send_decode_data_ = true;
-      return Http::FilterHeadersStatus::StopIteration;
+  if (config_->sendRequestData() && !isEmptyBodyMethod(headers.Method()->value().getStringView())) {
+    ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
+    send_decode_data_ = true;
+    return Http::FilterHeadersStatus::StopIteration;
   }
 
   initiateCall(headers);
   return filter_return_ == FilterReturn::StopDecoding ? Http::FilterHeadersStatus::StopIteration
-                                                      : Http::FilterHeadersStatus::Continue;                                                      
+                                                      : Http::FilterHeadersStatus::Continue;
 }
 
 Http::FilterDataStatus Filter::decodeData(Buffer::Instance&, bool end_stream) {
   if (send_decode_data_) {
-    if (!end_stream) {
+    if (end_stream) {
+      ENVOY_STREAM_LOG(debug, "ext_authz initiating call after buffering", *callbacks_);
+      initiateCall(*request_headers_);
+    } else {
       ENVOY_STREAM_LOG(debug, "ext_authz stoping and buffering", *callbacks_);
       return Http::FilterDataStatus::StopIterationAndBuffer;
     }
-    ENVOY_STREAM_LOG(debug, "ext_authz initiating call after buffering", *callbacks_);
-    initiateCall(*request_headers_);
   }
 
   return filter_return_ == FilterReturn::StopDecoding
-           ? Http::FilterDataStatus::StopIterationAndWatermark
-           : Http::FilterDataStatus::Continue;
+             ? Http::FilterDataStatus::StopIterationAndWatermark
+             : Http::FilterDataStatus::Continue;
 }
 
 Http::FilterTrailersStatus Filter::decodeTrailers(Http::HeaderMap&) {
@@ -200,7 +223,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
   }
 }
 
+} // namespace ExtAuthz
 } // namespace HttpFilters
 } // namespace Extensions
-} // namespace Envoy
 } // namespace Envoy
