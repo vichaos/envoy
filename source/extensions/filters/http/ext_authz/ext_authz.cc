@@ -92,9 +92,9 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
   initiating_call_ = false;
 }
 
-Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) {
+Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
   request_headers_ = &headers;
-  if (config_->sendRequestData() && !isEmptyBodyMethod(headers.Method()->value().getStringView())) {
+  if (config_->sendRequestData() && !(end_stream || isEmptyBodyMethod(headers.Method()->value().getStringView()))) {
     ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
     send_decode_data_ = true;
     return Http::FilterHeadersStatus::StopIteration;
