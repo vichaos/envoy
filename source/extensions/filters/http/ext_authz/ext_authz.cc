@@ -94,7 +94,8 @@ void Filter::initiateCall(const Http::HeaderMap& headers) {
 
 Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool end_stream) {
   request_headers_ = &headers;
-  if (config_->sendRequestData() && !(end_stream || isEmptyBodyMethod(headers.Method()->value().getStringView()))) {
+  if (config_->sendRequestData() &&
+      !(end_stream || isEmptyBodyMethod(headers.Method()->value().getStringView()))) {
     ENVOY_STREAM_LOG(debug, "ext_authz sending decode data", *callbacks_);
     send_decode_data_ = true;
     return Http::FilterHeadersStatus::StopIteration;
@@ -198,6 +199,10 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
     // Only send headers if the response is ok.
     if (response->status == CheckStatus::OK) {
       ENVOY_STREAM_LOG(trace, "ext_authz upstream header(s):", *callbacks_);
+      if (!response->headers_to_add.empty() || !response->headers_to_append.empty()) {
+        callbacks_->clearRouteCache();
+      }
+
       for (const auto& header : response->headers_to_add) {
         Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
         if (header_to_modify) {
@@ -207,6 +212,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
         }
         ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
       }
+
       for (const auto& header : response->headers_to_append) {
         Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
         if (header_to_modify) {
