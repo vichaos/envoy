@@ -105,6 +105,17 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
       cm_.httpAsyncClientForCluster(cluster_name_).send(std::move(message_ptr), *this, timeout_);
 }
 
+void RawHttpClientImpl::onSuccess(Http::MessagePtr&& message) {
+  callbacks_->onComplete(messageToResponse(std::move(message)));
+  callbacks_ = nullptr;
+}
+
+void RawHttpClientImpl::onFailure(Http::AsyncClient::FailureReason reason) {
+  ASSERT(reason == Http::AsyncClient::FailureReason::Reset);
+  callbacks_->onComplete(std::make_unique<Response>(getErrorResponse()));
+  callbacks_ = nullptr;
+}
+
 ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {
   // Set an error status if parsing status code fails. A Forbidden response is sent to the client
   // if the filter has not been configured with failure_mode_allow.
@@ -131,27 +142,27 @@ ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {
     response->body = message->bodyAsString();
   }
 
-  // Copy all headers from the message that should be in the response.
-  for (const auto& allowed_header : allowed_authorization_headers_) {
-    const auto* entry = message->headers().get(allowed_header);
-    if (entry) {
-      response->headers_to_add.emplace_back(Http::LowerCaseString{entry->key().c_str()},
-                                            std::string{entry->value().c_str()});
-    }
-  }
+  struct Data {
+    const Http::LowerCaseStrUnorderedSet* s_;
+    Response* r_;
+  };
+
+  Data data;
+  data.s_ = &allowed_authorization_headers_;
+  data.r_ = response.get();
+
+  message->headers().iterate(
+      [](const Envoy::Http::HeaderEntry& e, void* ctx) {
+        Data* data = static_cast<Data*>(ctx);
+        const auto key = Http::LowerCaseString(e.key().c_str());
+        if (data->s_->find(key) != data->s_->end()) {
+          data->r_->headers_to_add.emplace_back(key, std::string{e.value().getStringView()});
+        }
+        return Envoy::Http::HeaderMap::Iterate::Continue;
+      },
+      &data);
 
   return response;
-}
-
-void RawHttpClientImpl::onSuccess(Http::MessagePtr&& message) {
-  callbacks_->onComplete(messageToResponse(std::move(message)));
-  callbacks_ = nullptr;
-}
-
-void RawHttpClientImpl::onFailure(Http::AsyncClient::FailureReason reason) {
-  ASSERT(reason == Http::AsyncClient::FailureReason::Reset);
-  callbacks_->onComplete(std::make_unique<Response>(getErrorResponse()));
-  callbacks_ = nullptr;
 }
 
 } // namespace ExtAuthz
