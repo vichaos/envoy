@@ -54,6 +54,7 @@ envoy_cc_library(
         "//source/common/common:minimal_logger_lib",
         "//source/common/http:async_client_lib",
         "//source/common/http:codes_lib",
+        "//source/common/tracing:http_tracer_lib",
     ],
 )
 

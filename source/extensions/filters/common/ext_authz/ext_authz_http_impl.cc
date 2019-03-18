@@ -61,9 +61,10 @@ void RawHttpClientImpl::cancel() {
 
 void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               const envoy::service::auth::v2alpha::CheckRequest& request,
-                              Tracing::Span&) {
+                              Tracing::Span& span) {
   ASSERT(callbacks_ == nullptr);
   callbacks_ = &callbacks;
+  span_ = &span;
 
   Http::HeaderMapPtr headers_ptr{};
   const uint64_t request_length =
@@ -135,8 +136,10 @@ ResponsePtr RawHttpClientImpl::messageToResponse(Http::MessagePtr message) {
   ResponsePtr response;
   // Set an accepted or a denied authorization response.
   if (status_code == enumToInt(Http::Code::OK)) {
+    span_->setTag(Constants::get().TraceStatus, Constants::get().TraceOk);
     response = std::make_unique<Response>(getOkResponse());
   } else {
+    span_->setTag(Constants::get().TraceStatus, Constants::get().TraceUnauthz);
     response = std::make_unique<Response>(getDeniedResponse());
     response->status_code = static_cast<Http::Code>(status_code);
     response->body = message->bodyAsString();

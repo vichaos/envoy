@@ -1,10 +1,12 @@
 #pragma once
 
+#include "envoy/tracing/http_tracer.h"
 #include "envoy/upstream/cluster_manager.h"
 
 #include "common/common/logger.h"
 
 #include "extensions/filters/common/ext_authz/ext_authz.h"
+
 
 namespace Envoy {
 namespace Extensions {
@@ -54,6 +56,7 @@ private:
   Upstream::ClusterManager& cm_;
   Http::AsyncClient::Request* request_{};
   RequestCallbacks* callbacks_{};
+  Tracing::Span* span_{};
 };
 
 } // namespace ExtAuthz

@@ -219,11 +219,11 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
       for (const auto& header : response->headers_to_append) {
         Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
         if (header_to_modify) {
-          ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
           Http::HeaderMapImpl::appendToHeader(header_to_modify->value(), header.second);
         } else {
           request_headers_->addCopy(header.first, header.second);
         }
+        ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
       }
     }
 
