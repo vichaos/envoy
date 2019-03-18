@@ -63,8 +63,11 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               const envoy::service::auth::v2alpha::CheckRequest& request,
                               Tracing::Span& span) {
   ASSERT(callbacks_ == nullptr);
+  ASSERT(span_ == nullptr);
   callbacks_ = &callbacks;
   span_ = &span;
+  
+  span_->setSampled(false);
 
   Http::HeaderMapPtr headers_ptr{};
   const uint64_t request_length =
