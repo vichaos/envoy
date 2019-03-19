@@ -68,10 +68,8 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
   ASSERT(callbacks_ == nullptr);
   ASSERT(span_ == nullptr);
   callbacks_ = &callbacks;
-  span_ = parent_span.spawnChild(
-                              Tracing::EgressConfig::get(), "ext_authz egress", real_time_.systemTime());
-
-  span_->setTag(Constants::get().TraceStatus, Constants::get().TraceCheck);
+  span_ = parent_span.spawnChild(Tracing::EgressConfig::get(), "async "+ cluster_name_ + " egress", real_time_.systemTime());
+  span_->setTag(Tracing::Tags::get().UPSTREAM_CLUSTER, cluster_name_);
 
   Http::HeaderMapPtr headers_ptr{};
   const uint64_t request_length =
