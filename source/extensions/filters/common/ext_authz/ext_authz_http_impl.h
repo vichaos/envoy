@@ -56,7 +56,8 @@ private:
   Upstream::ClusterManager& cm_;
   Http::AsyncClient::Request* request_{};
   RequestCallbacks* callbacks_{};
-  Tracing::Span* span_{};
+  Tracing::SpanPtr span_;
+  RealTimeSource real_time_;
 };
 
 } // namespace ExtAuthz

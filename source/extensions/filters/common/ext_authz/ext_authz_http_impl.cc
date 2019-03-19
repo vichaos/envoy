@@ -49,7 +49,8 @@ RawHttpClientImpl::RawHttpClientImpl(
       allowed_authorization_headers_(allowed_authorization_headers),
       allowed_request_headers_(allowed_request_headers),
       authorization_headers_to_add_(authorization_headers_to_add), timeout_(timeout),
-      cm_(cluster_manager) {}
+      cm_(cluster_manager),
+      real_time_() {}
 
 RawHttpClientImpl::~RawHttpClientImpl() { ASSERT(!callbacks_); }
 
@@ -61,14 +62,12 @@ void RawHttpClientImpl::cancel() {
 
 void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               const envoy::service::auth::v2alpha::CheckRequest& request,
-                              Tracing::Span& span) {
+                              Tracing::Span& parent_span) {
   ASSERT(callbacks_ == nullptr);
   ASSERT(span_ == nullptr);
   callbacks_ = &callbacks;
-  span_ = &span;
-  
-  span_->setSampled(false);
-
+  span_ = parent_span.spawnChild(
+                              Tracing::EgressConfig::get(), "ext_authz egress", real_time_.systemTime());
   Http::HeaderMapPtr headers_ptr{};
   const uint64_t request_length =
       request.attributes().request().http().body().inline_bytes().length();
