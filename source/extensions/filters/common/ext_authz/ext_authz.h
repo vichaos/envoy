@@ -20,6 +20,7 @@ namespace ExtAuthz {
 
 struct ConstantValues {
   const std::string TraceStatus = "ext_authz_status";
+  const std::string TraceCheck = "ext_authz_check";
   const std::string TraceUnauthz = "ext_authz_unauthorized";
   const std::string TraceOk = "ext_authz_ok";
 };

@@ -56,6 +56,8 @@ RawHttpClientImpl::~RawHttpClientImpl() { ASSERT(!callbacks_); }
 
 void RawHttpClientImpl::cancel() {
   ASSERT(callbacks_ != nullptr);
+  span_->setTag(Tracing::Tags::get().STATUS, Tracing::Tags::get().CANCELED);
+  span_->finishSpan();
   request_->cancel();
   callbacks_ = nullptr;
 }
@@ -68,6 +70,9 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
   callbacks_ = &callbacks;
   span_ = parent_span.spawnChild(
                               Tracing::EgressConfig::get(), "ext_authz egress", real_time_.systemTime());
+
+  span_->setTag(Constants::get().TraceStatus, Constants::get().TraceCheck);
+
   Http::HeaderMapPtr headers_ptr{};
   const uint64_t request_length =
       request.attributes().request().http().body().inline_bytes().length();
@@ -97,6 +102,8 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
     headers_ptr->setReference(kv.first, kv.second);
   }
 
+  span_->injectContext(*(headers_ptr.get()));
+
   Http::MessagePtr message_ptr =
       std::make_unique<Envoy::Http::RequestMessageImpl>(std::move(headers_ptr));
   if (request_length > 0) {
@@ -110,11 +117,14 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
 
 void RawHttpClientImpl::onSuccess(Http::MessagePtr&& message) {
   callbacks_->onComplete(messageToResponse(std::move(message)));
+  span_->finishSpan();
   callbacks_ = nullptr;
 }
 
 void RawHttpClientImpl::onFailure(Http::AsyncClient::FailureReason reason) {
   ASSERT(reason == Http::AsyncClient::FailureReason::Reset);
+  span_->setTag(Tracing::Tags::get().ERROR, Tracing::Tags::get().TRUE);
+  span_->finishSpan();
   callbacks_->onComplete(std::make_unique<Response>(getErrorResponse()));
   callbacks_ = nullptr;
 }
