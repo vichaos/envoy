@@ -182,6 +182,10 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
     // Only send headers if the response is ok.
     if (response->status == CheckStatus::OK) {
       ENVOY_STREAM_LOG(trace, "ext_authz filter added header(s) to the request:", *callbacks_);
+      if (!response->headers_to_add.empty() || !response->headers_to_append.empty()) {
+        callbacks_->clearRouteCache();
+      }
+      
       for (const auto& header : response->headers_to_add) {
         Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
         if (header_to_modify) {
@@ -191,6 +195,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
         }
         ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
       }
+      
       for (const auto& header : response->headers_to_append) {
         Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
         if (header_to_modify) {
