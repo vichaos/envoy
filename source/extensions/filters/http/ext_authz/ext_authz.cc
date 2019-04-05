@@ -164,7 +164,9 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
           ENVOY_STREAM_LOG(trace,
                            "ext_authz filter added header(s) to the local response:", callbacks);
           for (const auto& header : headers) {
-            response_headers.remove(header.first);
+            if (header.first != Http::Headers::get().SetCookie) {
+              response_headers.remove(header.first);
+            }
             response_headers.addCopy(header.first, header.second);
             ENVOY_STREAM_LOG(trace, " '{}':'{}'", callbacks, header.first.get(), header.second);
           }
