@@ -39,5 +39,8 @@ envoy_cc_library(
         "//include/envoy/singleton:manager_interface",
         "//include/envoy/tracing:http_tracer_interface",
         "@envoy_api//envoy/config/ratelimit/v2:rls_cc",
+
+        # Support to legacy rate-limit service
+        "@envoy_api//envoy/service/ratelimit/v1:rls_cc",
     ],
 )

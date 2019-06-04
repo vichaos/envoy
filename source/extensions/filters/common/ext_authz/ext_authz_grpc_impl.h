@@ -16,8 +16,6 @@
 #include "envoy/tracing/http_tracer.h"
 #include "envoy/upstream/cluster_manager.h"
 
-#include "common/singleton/const_singleton.h"
-
 #include "extensions/filters/common/ext_authz/check_request_utils.h"
 #include "extensions/filters/common/ext_authz/ext_authz.h"
 
@@ -29,14 +27,6 @@ namespace ExtAuthz {
 
 typedef Grpc::TypedAsyncRequestCallbacks<envoy::service::auth::v2::CheckResponse>
     ExtAuthzAsyncCallbacks;
-
-struct ConstantValues {
-  const std::string TraceStatus = "ext_authz_status";
-  const std::string TraceUnauthz = "ext_authz_unauthorized";
-  const std::string TraceOk = "ext_authz_ok";
-};
-
-typedef ConstSingleton<ConstantValues> Constants;
 
 /*
  * This client implementation is used when the Ext_Authz filter needs to communicate with an gRPC
