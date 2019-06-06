@@ -147,7 +147,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
 
   switch (response->status) {
   case CheckStatus::OK: {
-    ENVOY_STREAM_LOG(trace, "ext_authz filter added header(s) to the request:", *
+    ENVOY_STREAM_LOG(trace, "ext_authz filter added header(s) to the request:", *callbacks_);
     if (!response->headers_to_add.empty() || !response->headers_to_append.empty()) {
       ENVOY_STREAM_LOG(debug, "ext_authz has cleared route cache", *callbacks_);
       callbacks_->clearRouteCache();
@@ -229,38 +229,8 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
       callbacks_->sendLocalReply(config_->statusOnError(), EMPTY_STRING, nullptr, absl::nullopt,
                                  RcDetails::get().AuthzError);
     }
-<<<<<<< HEAD
     break;
   }
-=======
-    // Only send headers if the response is ok.
-    if (response->status == CheckStatus::OK) {
-      ENVOY_STREAM_LOG(trace, "ext_authz filter added header(s) to the request:", *callbacks_);
-      if (!response->headers_to_add.empty() || !response->headers_to_append.empty()) {
-        callbacks_->clearRouteCache();
-      }
-      
-      for (const auto& header : response->headers_to_add) {
-        Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
-        if (header_to_modify) {
-          header_to_modify->value(header.second.c_str(), header.second.size());
-        } else {
-          request_headers_->addCopy(header.first, header.second);
-        }
-        ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
-      }
-      
-      for (const auto& header : response->headers_to_append) {
-        Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
-        if (header_to_modify) {
-          Http::HeaderMapImpl::appendToHeader(header_to_modify->value(), header.second);
-          ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
-        } else {
-          request_headers_->addCopy(header.first, header.second);
-        }
-      }
-    }
->>>>>>> a484da25f765a28546b0f312115a8a346959f15c
 
   default:
     NOT_REACHED_GCOVR_EXCL_LINE;
