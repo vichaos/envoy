@@ -12,6 +12,7 @@
 #include "envoy/service/auth/v2/external_auth.pb.h"
 #include "envoy/tracing/http_tracer.h"
 
+#include "common/singleton/const_singleton.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -20,7 +21,7 @@ namespace Common {
 namespace ExtAuthz {
 
 /**
- * Tracing statuses. 
+ * Tracing statuses.
  */
 struct ConstantValues {
   const std::string TraceStatus = "ext_authz_status";
