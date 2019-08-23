@@ -258,6 +258,20 @@ virtual_hosts:
       prefix_rewrite: "/oranGES"
       cluster: instant-server
   - match:
+      path: "/rewrite-host-with-header-value"
+    request_headers_to_add:
+    - header:
+        key: x-rewrite-host
+        value: rewrote
+    route:
+      cluster: ats
+      auto_host_rewrite_header: x-rewrite-host
+  - match:
+      path: "/do-not-rewrite-host-with-header-value"
+    route:
+      cluster: ats
+      auto_host_rewrite_header: x-rewrite-host
+  - match:
       prefix: "/"
     route:
       cluster: instant-server
@@ -416,6 +430,24 @@ virtual_hosts:
     const RouteEntry* route = config.route(headers, 0)->routeEntry();
     route->finalizeRequestHeaders(headers, stream_info, true);
     EXPECT_EQ("new_host", headers.get_(Http::Headers::get().Host));
+  }
+
+  // Rewrites host using supplied header.
+  {
+    Http::TestHeaderMapImpl headers =
+        genHeaders("api.lyft.com", "/rewrite-host-with-header-value", "GET");
+    const RouteEntry* route = config.route(headers, 0)->routeEntry();
+    route->finalizeRequestHeaders(headers, stream_info, true);
+    EXPECT_EQ("rewrote", headers.get_(Http::Headers::get().Host));
+  }
+
+  // Does not rewrite host because of missing header.
+  {
+    Http::TestHeaderMapImpl headers =
+        genHeaders("api.lyft.com", "/do-not-rewrite-host-with-header-value", "GET");
+    const RouteEntry* route = config.route(headers, 0)->routeEntry();
+    route->finalizeRequestHeaders(headers, stream_info, true);
+    EXPECT_EQ("api.lyft.com", headers.get_(Http::Headers::get().Host));
   }
 
   // Case sensitive rewrite matching test.
@@ -1067,6 +1099,44 @@ virtual_hosts:
                EnvoyException);
 }
 
+TEST_F(RouteMatcherTest, NoHostRewriteAndAutoRewriteHeader) {
+  const std::string yaml = R"EOF(
+virtual_hosts:
+- name: local_service
+  domains:
+  - "*"
+  routes:
+  - match:
+      prefix: "/"
+    route:
+      cluster: local_service
+      host_rewrite: foo
+      auto_host_rewrite_header: "dummy-header"
+  )EOF";
+
+  EXPECT_THROW(TestConfigImpl(parseRouteConfigurationFromV2Yaml(yaml), factory_context_, true),
+               EnvoyException);
+}
+
+TEST_F(RouteMatcherTest, NoAutoRewriteAndAutoRewriteHeader) {
+  const std::string yaml = R"EOF(
+virtual_hosts:
+- name: local_service
+  domains:
+  - "*"
+  routes:
+  - match:
+      prefix: "/"
+    route:
+      cluster: local_service
+      auto_host_rewrite: true
+      auto_host_rewrite_header: "dummy-header"
+  )EOF";
+
+  EXPECT_THROW(TestConfigImpl(parseRouteConfigurationFromV2Yaml(yaml), factory_context_, true),
+               EnvoyException);
+}
+
 TEST_F(RouteMatcherTest, HeaderMatchedRouting) {
   const std::string yaml = R"EOF(
 virtual_hosts:
@@ -1378,7 +1448,7 @@ virtual_hosts:
                              ->mutable_routes(0)
                              ->mutable_route()
                              ->mutable_hash_policy();
-    if (hash_policies->size() > 0) {
+    if (!hash_policies->empty()) {
       return hash_policies->Mutable(0);
     } else {
       return hash_policies->Add();
@@ -2249,7 +2319,7 @@ virtual_hosts:
       retry_policy:
         per_try_timeout: 1s
         num_retries: 3
-        retry_on: 5xx,gateway-error,connect-failure
+        retry_on: 5xx,gateway-error,connect-failure,reset
   )EOF";
 
   TestConfigImpl config(parseRouteConfigurationFromV2Yaml(yaml), factory_context_, true);
@@ -2293,7 +2363,7 @@ virtual_hosts:
                     ->retryPolicy()
                     .numRetries());
   EXPECT_EQ(RetryPolicy::RETRY_ON_CONNECT_FAILURE | RetryPolicy::RETRY_ON_5XX |
-                RetryPolicy::RETRY_ON_GATEWAY_ERROR,
+                RetryPolicy::RETRY_ON_GATEWAY_ERROR | RetryPolicy::RETRY_ON_RESET,
             config.route(genHeaders("www.lyft.com", "/", "GET"), 0)
                 ->routeEntry()
                 ->retryPolicy()
@@ -2306,7 +2376,7 @@ name: RetryVirtualHostLevel
 virtual_hosts:
 - domains: [www.lyft.com]
   name: www
-  retry_policy: {num_retries: 3, per_try_timeout: 1s, retry_on: '5xx,gateway-error,connect-failure'}
+  retry_policy: {num_retries: 3, per_try_timeout: 1s, retry_on: '5xx,gateway-error,connect-failure,reset'}
   routes:
   - match: {prefix: /foo}
     route:
@@ -2347,7 +2417,7 @@ virtual_hosts:
                     ->retryPolicy()
                     .numRetries());
   EXPECT_EQ(RetryPolicy::RETRY_ON_CONNECT_FAILURE | RetryPolicy::RETRY_ON_5XX |
-                RetryPolicy::RETRY_ON_GATEWAY_ERROR,
+                RetryPolicy::RETRY_ON_GATEWAY_ERROR | RetryPolicy::RETRY_ON_RESET,
             config.route(genHeaders("www.lyft.com", "/bar", "GET"), 0)
                 ->routeEntry()
                 ->retryPolicy()
@@ -2362,7 +2432,7 @@ virtual_hosts:
                     ->retryPolicy()
                     .numRetries());
   EXPECT_EQ(RetryPolicy::RETRY_ON_CONNECT_FAILURE | RetryPolicy::RETRY_ON_5XX |
-                RetryPolicy::RETRY_ON_GATEWAY_ERROR,
+                RetryPolicy::RETRY_ON_GATEWAY_ERROR | RetryPolicy::RETRY_ON_RESET,
             config.route(genHeaders("www.lyft.com", "/", "GET"), 0)
                 ->routeEntry()
                 ->retryPolicy()
