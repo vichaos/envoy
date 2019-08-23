@@ -59,14 +59,14 @@ struct Response {
   Http::Code status_code{};
 };
 
-typedef std::unique_ptr<Response> ResponsePtr;
+using ResponsePtr = std::unique_ptr<Response>;
 
 /**
  * Async callbacks used during check() calls.
  */
 class RequestCallbacks {
 public:
-  virtual ~RequestCallbacks() {}
+  virtual ~RequestCallbacks() = default;
 
   /**
    * Called when a check request is complete. The resulting ResponsePtr is supplied.
@@ -77,7 +77,7 @@ public:
 class Client {
 public:
   // Destructor
-  virtual ~Client() {}
+  virtual ~Client() = default;
 
   /**
    * Cancel an inflight Check request.
@@ -98,7 +98,7 @@ public:
                      Tracing::Span& parent_span) PURE;
 };
 
-typedef std::unique_ptr<Client> ClientPtr;
+using ClientPtr = std::unique_ptr<Client>;
 
 } // namespace ExtAuthz
 } // namespace Common

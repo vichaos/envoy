@@ -25,8 +25,6 @@
 #include "server/listener_manager_impl.h"
 #include "server/server.h"
 
-#include "extensions/transport_sockets/tls/context_manager_impl.h"
-
 #include "absl/types/optional.h"
 
 namespace Envoy {
@@ -183,7 +181,7 @@ private:
   Singleton::ManagerPtr singleton_manager_;
   Runtime::LoaderPtr runtime_loader_;
   Runtime::RandomGeneratorImpl random_generator_;
-  std::unique_ptr<Extensions::TransportSockets::Tls::ContextManagerImpl> ssl_context_manager_;
+  std::unique_ptr<Ssl::ContextManager> ssl_context_manager_;
   Configuration::MainImpl config_;
   LocalInfo::LocalInfoPtr local_info_;
   AccessLog::AccessLogManagerImpl access_log_manager_;
