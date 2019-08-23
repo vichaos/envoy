@@ -1,6 +1,7 @@
 #include "extensions/filters/common/ext_authz/ext_authz_http_impl.h"
 
 #include "common/common/enum_to_int.h"
+#include "common/common/fmt.h"
 #include "common/http/async_client_impl.h"
 #include "common/http/codes.h"
 
@@ -78,7 +79,8 @@ ClientConfig::ClientConfig(const envoy::config::filter::http::ext_authz::v2::Ext
       authorization_headers_to_add_(
           toHeadersAdd(config.http_service().authorization_request().headers_to_add())),
       cluster_name_(config.http_service().server_uri().cluster()), timeout_(timeout),
-      path_prefix_(path_prefix) {}
+      path_prefix_(path_prefix),
+      tracing_name_(fmt::format("async {} egress", config.http_service().server_uri().cluster())) {}
 
 MatcherSharedPtr
 ClientConfig::toRequestMatchers(const envoy::type::matcher::ListStringMatcher& list) {
@@ -145,12 +147,14 @@ Http::LowerCaseStrPairVector ClientConfig::toHeadersAdd(
 }
 
 RawHttpClientImpl::RawHttpClientImpl(Upstream::ClusterManager& cm, ClientConfigSharedPtr config)
-    : cm_(cm), config_(config) {}
+    : cm_(cm), config_(config), real_time_() {}
 
 RawHttpClientImpl::~RawHttpClientImpl() { ASSERT(!callbacks_); }
 
 void RawHttpClientImpl::cancel() {
   ASSERT(callbacks_ != nullptr);
+  span_->setTag(Tracing::Tags::get().Status, Tracing::Tags::get().Canceled);
+  span_->finishSpan();
   request_->cancel();
   callbacks_ = nullptr;
 }
@@ -158,9 +162,14 @@ void RawHttpClientImpl::cancel() {
 // Client
 void RawHttpClientImpl::check(RequestCallbacks& callbacks,
                               const envoy::service::auth::v2::CheckRequest& request,
-                              Tracing::Span&) {
+                              Tracing::Span& parent_span) {
   ASSERT(callbacks_ == nullptr);
+  ASSERT(span_ == nullptr);
+
   callbacks_ = &callbacks;
+  span_ = parent_span.spawnChild(Tracing::EgressConfig::get(), config_->tracingName(),
+                                 real_time_.systemTime());
+  span_->setTag(Tracing::Tags::get().UpstreamCluster, config_->cluster());
 
   Http::HeaderMapPtr headers;
   const uint64_t request_length = request.attributes().request().http().body().size();
@@ -203,12 +212,15 @@ void RawHttpClientImpl::check(RequestCallbacks& callbacks,
 
 void RawHttpClientImpl::onSuccess(Http::MessagePtr&& message) {
   callbacks_->onComplete(toResponse(std::move(message)));
+  span_->finishSpan();
   callbacks_ = nullptr;
 }
 
 void RawHttpClientImpl::onFailure(Http::AsyncClient::FailureReason reason) {
   ASSERT(reason == Http::AsyncClient::FailureReason::Reset);
   callbacks_->onComplete(std::make_unique<Response>(errorResponse()));
+  span_->setTag(Tracing::Tags::get().Error, Tracing::Tags::get().True);
+  span_->finishSpan();
   callbacks_ = nullptr;
 }
 
@@ -233,6 +245,7 @@ ResponsePtr RawHttpClientImpl::toResponse(Http::MessagePtr message) {
     SuccessResponse ok{message->headers(), config_->upstreamHeaderMatchers(),
                        Response{CheckStatus::OK, Http::HeaderVector{}, Http::HeaderVector{},
                                 EMPTY_STRING, Http::Code::OK}};
+    span_->setTag(Constants::get().TraceStatus, Constants::get().TraceOk);
     return std::move(ok.response_);
   }
 
@@ -240,6 +253,7 @@ ResponsePtr RawHttpClientImpl::toResponse(Http::MessagePtr message) {
   SuccessResponse denied{message->headers(), config_->clientHeaderMatchers(),
                          Response{CheckStatus::Denied, Http::HeaderVector{}, Http::HeaderVector{},
                                   message->bodyAsString(), static_cast<Http::Code>(status_code)}};
+  span_->setTag(Constants::get().TraceStatus, Constants::get().TraceUnauthz);
   return std::move(denied.response_);
 }
 

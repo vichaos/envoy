@@ -148,9 +148,8 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
   switch (response->status) {
   case CheckStatus::OK: {
     ENVOY_STREAM_LOG(trace, "ext_authz filter added header(s) to the request:", *callbacks_);
-    if (config_->clearRouteCache() &&
-        (!response->headers_to_add.empty() || !response->headers_to_append.empty())) {
-      ENVOY_STREAM_LOG(debug, "ext_authz is clearing route cache", *callbacks_);
+    if (!response->headers_to_add.empty() || !response->headers_to_append.empty()) {
+      ENVOY_STREAM_LOG(debug, "ext_authz has cleared route cache", *callbacks_);
       callbacks_->clearRouteCache();
     }
     for (const auto& header : response->headers_to_add) {
@@ -167,6 +166,8 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
       if (header_to_modify) {
         ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
         Http::HeaderMapImpl::appendToHeader(header_to_modify->value(), header.second);
+      } else {
+        request_headers_->addCopy(header.first, header.second);
       }
     }
     cluster_->statsScope().counter("ext_authz.ok").inc();
@@ -197,7 +198,10 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
                            "ext_authz filter added header(s) to the local response:", callbacks);
           for (const auto& header : headers) {
             ENVOY_STREAM_LOG(trace, " '{}':'{}'", callbacks, header.first.get(), header.second);
-            response_headers.remove(header.first);
+            // This is just a work-around for set-cookie.
+            if (header.first != Http::Headers::get().SetCookie) {
+              response_headers.remove(header.first);
+            }
             response_headers.addCopy(header.first, header.second);
           }
         },
